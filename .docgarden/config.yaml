@@ -1,0 +1,18 @@
+repo_name: docgarden
+strict_score_fail_threshold: 70
+critical_domains:
+  - docs
+  - exec-plans
+review_defaults:
+  canonical_review_cycle_days: 30
+  workflow_review_cycle_days: 45
+safe_autofix:
+  enabled: true
+  allow:
+    - headings
+    - stale_status
+block_on:
+  - broken_agents_routes
+  - missing_frontmatter_on_canonical
+  - stale_verified_canonical_docs
+  - active_exec_plan_missing_progress

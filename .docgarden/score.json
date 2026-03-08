@@ -1,0 +1,31 @@
+{
+  "dimensions": {
+    "Alignment to artifacts": 100,
+    "Coverage": 100,
+    "Freshness": 100,
+    "Linking & discoverability": 100,
+    "Structure & metadata": 100,
+    "Verification & trust": 100
+  },
+  "domains": {
+    "docs": {
+      "doc_count": 2,
+      "findings": 0,
+      "score": 100,
+      "status": "high trust"
+    },
+    "exec-plans": {
+      "doc_count": 2,
+      "findings": 0,
+      "score": 100,
+      "status": "high trust"
+    }
+  },
+  "overall_score": 100,
+  "strict_score": 100,
+  "top_gaps": [],
+  "trend": {
+    "points": []
+  },
+  "updated_at": "2026-03-08T10:56:18"
+}

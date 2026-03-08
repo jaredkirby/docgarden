@@ -1,0 +1,19 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "docgarden"
+version = "0.1.0"
+description = "Repo-local maintenance harness for agent-facing documentation."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+  "PyYAML>=6.0",
+]
+
+[project.scripts]
+docgarden = "docgarden.cli:main"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
