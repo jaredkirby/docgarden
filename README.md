@@ -36,6 +36,9 @@ docgarden slices run --max-slices 1
 docgarden slices run --max-slices 1 --worker-timeout-seconds 900
 docgarden slices run --max-slices 1 --reviewer-timeout-seconds 300
 docgarden slices run --max-slices 1 --agent-timeout-seconds 600
+docgarden pr draft
+docgarden pr draft --unsafe-as-issue
+docgarden pr draft --publish
 docgarden show FINDING_ID
 docgarden quality write
 docgarden fix safe --apply
@@ -118,6 +121,15 @@ Use changed-scope scans for fast local feedback while editing docs, then return
 to a full `docgarden scan` before treating the score, queue, or persisted state
 as authoritative.
 
+`docgarden pr draft` runs a fresh full scan, then builds a markdown-ready draft
+summary from the current active findings plus current non-transient git changes.
+The JSON output includes the generated title/body, the exact finding ids in
+scope, the changed files list, and explicit publish blockers when remote
+automation is not configured.
+
+Use `docgarden pr draft --unsafe-as-issue` when the active findings are not
+safe to autofix and you want a follow-up issue draft instead of a PR draft.
+
 ## Automation
 
 `docgarden ci check` evaluates the persisted score after a full scan and exits
@@ -137,6 +149,23 @@ This repo now includes three GitHub Actions workflows:
 - `.github/workflows/docgarden-weekly-review.yml`
   Runs a weekly scan, prepares a review packet, groups in-scope docs by owner,
   and uploads the packet plus owner-nudge artifacts.
+
+`docgarden pr draft --publish` stays fail-closed. Remote PR or issue creation
+only runs when `.docgarden/config.yaml` opts into repo support explicitly and a
+token is present in the configured environment variable. Example:
+
+```yaml
+pr_drafts:
+  enabled: true
+  provider: github
+  repository: owner/repo
+  base_branch: main
+  token_env_var: DOCGARDEN_GITHUB_TOKEN
+```
+
+Without that config and credential, `docgarden pr draft` still generates the
+local title/body summary but reports why publish is blocked instead of touching
+the hosting provider.
 
 ## Slice automation
 
@@ -338,8 +367,10 @@ The repo currently includes:
   enforcement
 - GitHub Actions for PR enforcement, nightly scan plus safe-autofix patch
   capture, and weekly review-packet owner nudges
+- draft PR and unsafe-follow-up issue summaries backed by current findings plus
+  changed-file context, with explicit GitHub publish gating
 - automated slice kickoff and review prompt generation from the slice backlog
 - a Codex worker/reviewer loop that can continue until a slice is accepted or
   blocked
 
-Next planned slice: Draft PR and issue automation.
+Next planned slice: Promotion suggestions from transient docs.

@@ -101,6 +101,8 @@ spec sections to PR-sized implementation units.
 - 2026-03-09: Implemented S12 with a repo-owned `docgarden ci check` command that turns the configured strict-score threshold and `block_on` rules into CI-friendly JSON output plus a clean nonzero exit code.
 - 2026-03-09: Added PR, nightly, and weekly-review GitHub Actions workflows that run full scans, refresh score artifacts, and upload structured audit outputs under workflow artifacts instead of mutating repo truth directly.
 - 2026-03-09: Tightened the weekly automation loop so review packets are grouped into owner-nudge artifacts, while nightly safe autofix publishes a patch artifact for inspection rather than opening or mutating a truth-bearing PR directly.
+- 2026-03-09: Implemented S13 with `docgarden pr draft`, which runs a fresh scan, summarizes active findings alongside current non-transient git changes, and can optionally draft unsafe-work follow-up issues instead of PRs.
+- 2026-03-09: Kept S13 fail-closed by requiring explicit `.docgarden/config.yaml` repo support plus a configured token env var before any GitHub draft PR or issue publish path will run.
 
 ## Discoveries
 
@@ -207,6 +209,12 @@ spec sections to PR-sized implementation units.
 - The existing config already had the right enforcement knobs, but they only
   became operational once a CI-facing command translated those settings into a
   stable machine-readable contract.
+- PR automation summaries are easier to trust when they cite exact finding ids
+  and the current changed-file list instead of inventing a prose synopsis that
+  operators then have to cross-check by hand.
+- The safest publish boundary is opt-in config plus an explicit credential env
+  var; local draft generation stays useful even when remote automation is
+  intentionally disabled.
 
 ## Decision Log
 
@@ -238,6 +246,9 @@ spec sections to PR-sized implementation units.
 - 2026-03-09: Define explicit `--files` as an existing-doc list only; missing
   paths are validation errors, while deleted docs remain discoverable through
   git-derived changed scope.
+- 2026-03-09: Keep S13 publish support GitHub-only for now and require
+  `pr_drafts.enabled`, `repository`, `base_branch`, and a configured token env
+  var before `docgarden pr draft --publish` can touch the remote host.
 - 2026-03-09: Model S06 provenance validation as one aggregated
   `generated-doc-contract` finding per doc so missing source, timestamp,
   upstream path, and regeneration command details stay actionable without

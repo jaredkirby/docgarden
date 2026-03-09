@@ -18,6 +18,7 @@ class Config:
     review_defaults: dict[str, int] = field(default_factory=dict)
     safe_autofix: dict[str, Any] = field(default_factory=dict)
     block_on: list[str] = field(default_factory=list)
+    pr_drafts: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         if not isinstance(self.critical_domains, list) or not all(
@@ -40,6 +41,8 @@ class Config:
             isinstance(item, str) for item in self.block_on
         ):
             raise TypeError("block_on must be a list of strings")
+        if not isinstance(self.pr_drafts, dict):
+            raise TypeError("pr_drafts must be a mapping")
 
     @classmethod
     def load(cls, path: Path) -> "Config":
@@ -67,4 +70,5 @@ class Config:
             "review_defaults": self.review_defaults,
             "safe_autofix": self.safe_autofix,
             "block_on": self.block_on,
+            "pr_drafts": self.pr_drafts,
         }

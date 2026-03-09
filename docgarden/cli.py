@@ -14,6 +14,7 @@ from .cli_commands import (
     command_plan_reopen,
     command_plan_resolve,
     command_plan_triage,
+    command_pr_draft,
     command_quality_write,
     command_review_import,
     command_review_prepare,
@@ -189,6 +190,31 @@ def build_parser() -> argparse.ArgumentParser:
     fix_safe = fix_subparsers.add_parser("safe")
     fix_safe.add_argument("--apply", action="store_true")
     fix_safe.set_defaults(func=command_fix_safe)
+
+    pr = subparsers.add_parser(
+        "pr",
+        help="Prepare or publish draft PR or issue summaries from current docgarden state.",
+    )
+    pr_subparsers = pr.add_subparsers(dest="pr_command", required=True)
+    pr_draft = pr_subparsers.add_parser(
+        "draft",
+        help=(
+            "Generate a human-readable markdown summary from active findings and "
+            "current changed files. Add `--publish` only when repo support and "
+            "credentials are configured explicitly."
+        ),
+    )
+    pr_draft.add_argument(
+        "--unsafe-as-issue",
+        action="store_true",
+        help="Draft an unsafe-work follow-up issue instead of a draft PR.",
+    )
+    pr_draft.add_argument(
+        "--publish",
+        action="store_true",
+        help="Create the draft PR or issue through the configured provider.",
+    )
+    pr_draft.set_defaults(func=command_pr_draft)
 
     config = subparsers.add_parser("config")
     config_subparsers = config.add_subparsers(dest="config_command", required=True)

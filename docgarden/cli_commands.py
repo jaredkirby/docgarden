@@ -14,6 +14,7 @@ from .config import Config
 from .errors import DocgardenError
 from .fixers import apply_safe_fixes, preview_safe_fixes
 from .models import RepoPaths
+from .pr_drafts import build_pr_draft_payload, publish_pr_draft
 from .quality import write_quality_score
 from .scan_workflow import run_changed_scan, run_scan
 from .slices import (
@@ -33,6 +34,7 @@ from .slices import (
     run_slice_loop,
 )
 from .state import (
+    active_findings_from_latest_events,
     ensure_state_dirs,
     import_review,
     load_findings_history,
@@ -318,6 +320,23 @@ def command_fix_safe(args: argparse.Namespace) -> None:
             indent=2,
         )
     )
+
+
+def command_pr_draft(args: argparse.Namespace) -> None:
+    paths = repo_paths(Path.cwd())
+    result = run_scan(paths)
+    config = Config.load(paths.config)
+    active_findings = active_findings_from_latest_events(result.latest_events)
+    payload = build_pr_draft_payload(
+        paths.repo_root,
+        config,
+        active_findings,
+        unsafe_as_issue=args.unsafe_as_issue,
+    )
+    if args.publish:
+        payload["remote"] = publish_pr_draft(paths.repo_root, config, payload)
+        payload["published"] = True
+    print(json.dumps(payload, indent=2, sort_keys=True))
 
 
 def command_config_show(_: argparse.Namespace) -> None:

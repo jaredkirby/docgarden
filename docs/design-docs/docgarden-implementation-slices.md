@@ -77,8 +77,8 @@ criteria rather than re-explaining the whole product vision.
 | S10 | completed | Review packet preparation and import | S02, S03 |
 | S11 | completed | Safe autofix expansion | S07, S08 |
 | S12 | completed | CI enforcement and scheduled automation | S03, S09, S11 |
-| S13 | queued | Draft PR / issue automation | S12 |
-| S14 | blocked | Promotion suggestions from transient docs | S10 |
+| S13 | completed | Draft PR / issue automation | S12 |
+| S14 | queued | Promotion suggestions from transient docs | S10 |
 
 ## Current baseline
 
@@ -419,7 +419,7 @@ Acceptance:
 
 ### S13: Draft PR and issue automation
 
-Status: `blocked`
+Status: `completed`
 
 Goal:
 - Let the tool prepare fix-up PRs or issues once scan, queue, and safe-fix
@@ -430,16 +430,13 @@ Changes:
 - Generate human-readable summaries from current open findings and changed files.
 - Optionally create unsafe-work follow-up issues instead of PRs.
 
-Blocked on:
-- S12, because automation is the safe place to prove this behavior.
-
 Acceptance:
 - Draft summaries map cleanly to actual findings.
 - No PR automation runs without explicit repository support and credentials.
 
 ### S14: Promotion suggestions from transient docs
 
-Status: `blocked`
+Status: `queued`
 
 Goal:
 - Surface when repeated rules should move from exec plans or notes into
@@ -449,9 +446,6 @@ Changes:
 - Detect repeated business rules across exec plans, workaround notes, or similar
   transient docs.
 - Emit "promotion suggestion" findings with candidate destination docs.
-
-Blocked on:
-- S10, because the first version likely benefits from subjective review support.
 
 Acceptance:
 - Suggestions are explainable and evidence-backed.

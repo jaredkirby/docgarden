@@ -531,6 +531,223 @@ Text.
     assert refreshed_payload["event"] == "resolved"
 
 
+def test_cli_pr_draft_summarizes_active_findings_and_changed_files(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    repo = make_repo(tmp_path)
+    init_git_repo(repo)
+    write(
+        repo / "docs" / "stale.md",
+        CANONICAL_FRONTMATTER.replace("docs-index", "stale-doc").replace(
+            "2026-03-08", "2026-01-01"
+        )
+        + """
+# Stale Doc
+
+## Purpose
+Text.
+
+## Scope
+Text.
+
+## Source of Truth
+Text.
+
+## Rules / Definitions
+Text.
+
+## Exceptions / Caveats
+Text.
+
+## Validation / How to verify
+Text.
+
+## Related docs
+Text.
+""",
+    )
+    monkeypatch.chdir(repo)
+
+    assert main(["pr", "draft"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+
+    assert payload["mode"] == "pr"
+    assert payload["finding_count"] == 2
+    assert payload["changed_files"] == ["docs/stale.md"]
+    assert payload["publish_ready"] is False
+    assert payload["publish_target"]["enabled"] is False
+    finding_ids = {finding["id"] for finding in payload["findings"]}
+    assert "stale-review::docs::stale.md::stale" in finding_ids
+    assert "orphan-doc::docs::stale.md::orphan" in finding_ids
+    assert "stale-review::docs::stale.md::stale" in payload["body"]
+    assert "`docs/stale.md`" in payload["body"]
+    assert ".docgarden/score.json" not in payload["body"]
+
+
+def test_cli_pr_draft_can_focus_unsafe_findings_as_issue(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    repo = make_repo(tmp_path)
+    init_git_repo(repo)
+    write(
+        repo / "docs" / "stale.md",
+        CANONICAL_FRONTMATTER.replace("docs-index", "stale-doc").replace(
+            "2026-03-08", "2026-01-01"
+        )
+        + """
+# Stale Doc
+
+## Purpose
+Text.
+
+## Scope
+Text.
+
+## Source of Truth
+Text.
+
+## Rules / Definitions
+Text.
+
+## Exceptions / Caveats
+Text.
+
+## Validation / How to verify
+Text.
+
+## Related docs
+Text.
+""",
+    )
+    write(repo / "docs" / "notes.md", "# Scratch Notes\n\nMissing frontmatter.\n")
+    monkeypatch.chdir(repo)
+
+    assert main(["pr", "draft", "--unsafe-as-issue"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+
+    assert payload["mode"] == "issue"
+    assert payload["finding_count"] == len(payload["unsafe_finding_ids"])
+    assert payload["finding_ids"] == payload["unsafe_finding_ids"]
+    assert len(payload["safe_finding_ids"]) == 1
+    assert set(payload["changed_files"]) == {"docs/notes.md", "docs/stale.md"}
+    assert "missing required frontmatter" in payload["body"]
+    assert "past its review cycle" not in payload["body"]
+
+
+def test_cli_pr_draft_publish_requires_explicit_support_and_credentials(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    repo = make_repo(tmp_path)
+    init_git_repo(repo)
+    write(
+        repo / "docs" / "stale.md",
+        CANONICAL_FRONTMATTER.replace("docs-index", "stale-doc").replace(
+            "2026-03-08", "2026-01-01"
+        )
+        + """
+# Stale Doc
+
+## Purpose
+Text.
+
+## Scope
+Text.
+
+## Source of Truth
+Text.
+
+## Rules / Definitions
+Text.
+
+## Exceptions / Caveats
+Text.
+
+## Validation / How to verify
+Text.
+
+## Related docs
+Text.
+""",
+    )
+    monkeypatch.chdir(repo)
+
+    assert main(["pr", "draft", "--publish"]) == 1
+    error_output = capsys.readouterr().err
+
+    assert "Cannot publish draft" in error_output
+    assert "pr_drafts.enabled: true" in error_output
+
+
+def test_cli_pr_draft_publish_reports_remote_result(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    repo = make_repo(tmp_path)
+    write(
+        repo / ".docgarden" / "config.yaml",
+        """repo_name: test-docgarden
+strict_score_fail_threshold: 70
+pr_drafts:
+  enabled: true
+  provider: github
+  repository: acme/docgarden
+  base_branch: main
+  token_env_var: DOCGARDEN_GITHUB_TOKEN
+""",
+    )
+    init_git_repo(repo)
+    write(
+        repo / "docs" / "stale.md",
+        CANONICAL_FRONTMATTER.replace("docs-index", "stale-doc").replace(
+            "2026-03-08", "2026-01-01"
+        )
+        + """
+# Stale Doc
+
+## Purpose
+Text.
+
+## Scope
+Text.
+
+## Source of Truth
+Text.
+
+## Rules / Definitions
+Text.
+
+## Exceptions / Caveats
+Text.
+
+## Validation / How to verify
+Text.
+
+## Related docs
+Text.
+""",
+    )
+    monkeypatch.chdir(repo)
+    monkeypatch.setenv("DOCGARDEN_GITHUB_TOKEN", "test-token")
+    monkeypatch.setattr(
+        "docgarden.cli_commands.publish_pr_draft",
+        lambda repo_root, config, payload: {
+            "kind": "pull_request",
+            "number": 7,
+            "url": "https://github.com/acme/docgarden/pull/7",
+            "head_branch": "feature/s13",
+            "base_branch": "main",
+        },
+    )
+
+    assert main(["pr", "draft", "--publish"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+
+    assert payload["published"] is True
+    assert payload["publish_ready"] is True
+    assert payload["publish_target"]["repository"] == "acme/docgarden"
+    assert payload["remote"]["kind"] == "pull_request"
+    assert payload["remote"]["number"] == 7
+
+
 def test_cli_fix_safe_previews_and_applies_metadata_skeleton(tmp_path, monkeypatch, capsys) -> None:
     repo = make_repo(tmp_path)
     write(
