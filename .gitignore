@@ -1,7 +1,14 @@
 __pycache__/
 *.pyc
 .pytest_cache/
+.desloppify/
+.docgarden/baselines/
 .docgarden/cache/
+.docgarden/findings.jsonl
 .docgarden/locks/
+.docgarden/plan.json
+.docgarden/reviews/
 .docgarden/runs/
+.docgarden/score.json
+scorecard.png
 *.egg-info/
