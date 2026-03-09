@@ -421,16 +421,31 @@ def prepare_review_packet(
         {domain.strip() for domain in (domains or []) if domain.strip()}
     )
     findings, _, documents = scan_repo(repo_root)
-    selected_documents = [
-        document
-        for document in documents
-        if document.rel_path.startswith("docs/")
-        and document.frontmatter
-        and (
-            not normalized_domains
-            or str(document.frontmatter.get("domain", "")) in normalized_domains
-        )
-    ]
+    selected_documents = []
+    skipped_documents: list[dict[str, str]] = []
+    for document in documents:
+        if not document.rel_path.startswith("docs/"):
+            continue
+        if not document.frontmatter:
+            skipped_documents.append(
+                {
+                    "rel_path": document.rel_path,
+                    "reason": "missing_frontmatter",
+                }
+            )
+            continue
+        domain = str(document.frontmatter.get("domain", "")).strip()
+        if not domain:
+            skipped_documents.append(
+                {
+                    "rel_path": document.rel_path,
+                    "reason": "missing_domain",
+                }
+            )
+            continue
+        if normalized_domains and domain not in normalized_domains:
+            continue
+        selected_documents.append(document)
     if not selected_documents:
         scope = ", ".join(normalized_domains) if normalized_domains else "all docs"
         raise StateError(f"No documents matched review packet scope: {scope}.")
@@ -463,6 +478,10 @@ def prepare_review_packet(
         "scope": {
             "domains": normalized_domains,
             "documents": [document.rel_path for document in selected_documents],
+            "skipped_documents": sorted(
+                skipped_documents,
+                key=lambda item: (item["rel_path"], item["reason"]),
+            ),
         },
         "documents": [
             {
@@ -601,9 +620,9 @@ def _normalize_review_import(
         )
 
     raw_findings = payload.get("findings")
-    if not isinstance(raw_findings, list) or not raw_findings:
+    if not isinstance(raw_findings, list):
         raise StateError(
-            f"Review import {import_path} must provide a non-empty `findings` list."
+            f"Review import {import_path} must provide a `findings` list."
         )
 
     review_id = _optional_string(payload.get("review_id"))

@@ -93,6 +93,8 @@ spec sections to PR-sized implementation units.
 - 2026-03-09: Implemented S10 review packet export with deterministic packet IDs, stable file payloads under `.docgarden/reviews/`, and optional domain targeting through `docgarden review prepare --domains ...`.
 - 2026-03-09: Implemented S10 review import with strict packet-backed validation, persisted stored review payloads under `.docgarden/reviews/`, and append-only subjective findings that retain provenance in `findings.jsonl`.
 - 2026-03-09: Kept imported review findings distinct from mechanical scan observations by tagging their source in state and preventing later scans from auto-resolving them when they are absent from mechanical detector output.
+- 2026-03-09: Tightened S10 after review so clean `findings: []` review imports now persist successfully, preserving review provenance even when no subjective findings are created.
+- 2026-03-09: Narrowed the review-packet operator contract to review-ready docs and surfaced skipped docs with missing packet metadata directly in `review prepare` output and packet scope state.
 
 ## Discoveries
 
@@ -178,6 +180,12 @@ spec sections to PR-sized implementation units.
 - Packet-backed import validation is a useful trust boundary: it keeps review
   files honest by rejecting findings that mention files outside the prepared
   scope or packet IDs that were never exported locally.
+- The subjective-review pathway also needs to record successful clean passes;
+  otherwise the provenance trail silently rewards reviewers for inventing at
+  least one issue.
+- Review packet scope is clearest when it says "review-ready docs" and
+  explicitly lists skipped files that still need metadata cleanup before they
+  can join a packet.
 
 ## Decision Log
 

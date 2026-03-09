@@ -159,6 +159,7 @@ def command_review_prepare(args: argparse.Namespace) -> None:
                 "path": str(packet_path),
                 "domains": payload["scope"]["domains"],
                 "documents": payload["scope"]["documents"],
+                "skipped_documents": payload["scope"]["skipped_documents"],
                 "mechanical_findings": len(payload["mechanical_findings"]),
             },
             indent=2,

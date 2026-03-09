@@ -81,7 +81,8 @@ def build_parser() -> argparse.ArgumentParser:
         "--domains",
         help=(
             "Optional comma-separated doc domains to include in the packet. "
-            "Defaults to all docs under `docs/`."
+            "Defaults to review-ready docs under `docs/`; skipped docs that "
+            "lack packetizable metadata are reported in the output."
         ),
     )
     review_prepare.set_defaults(func=command_review_prepare)

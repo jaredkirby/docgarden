@@ -81,10 +81,26 @@ docgarden next
 
 `docgarden review prepare` writes a deterministic packet under
 `.docgarden/reviews/` containing the selected docs plus stable mechanical
-finding context for those files. `docgarden review import` accepts a structured
-JSON payload that references one of those packet IDs, stores the imported
-review under `.docgarden/reviews/`, and appends subjective findings with
-provenance into `findings.jsonl`.
+finding context for those files. By default it includes only review-ready docs
+under `docs/`; files that are skipped because they lack frontmatter or a
+declared domain are listed in the command output and packet scope metadata.
+`docgarden review import` accepts a structured JSON payload that references one
+of those packet IDs, stores the imported review under `.docgarden/reviews/`,
+and appends subjective findings with provenance into `findings.jsonl`.
+
+Clean review passes are valid imports too. A no-findings payload can look like:
+
+```json
+{
+  "packet_id": "<prepared-packet-id>",
+  "review_id": "docs-clean-pass",
+  "provenance": {
+    "runner": "manual",
+    "reviewer": "kirby"
+  },
+  "findings": []
+}
+```
 
 Use `accepted_debt`, `needs_human`, or `false_positive` with
 `docgarden plan resolve` when the outcome is not a straightforward fix. Those

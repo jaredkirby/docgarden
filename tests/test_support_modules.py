@@ -1066,6 +1066,10 @@ Text.
 """,
     )
     write(
+        repo / "docs" / "notes.md",
+        "# Scratch Notes\n\nThis file is not ready for packetized review.\n",
+    )
+    write(
         repo / "docs" / "design-docs" / "plan.md",
         """---
 doc_id: design-plan
@@ -1122,6 +1126,9 @@ Text.
     assert first_payload["packet_id"] == second_payload["packet_id"]
     assert first_payload["scope"]["domains"] == ["docs"]
     assert first_payload["scope"]["documents"] == ["docs/index.md"]
+    assert first_payload["scope"]["skipped_documents"] == [
+        {"rel_path": "docs/notes.md", "reason": "missing_frontmatter"}
+    ]
     assert [item["rel_path"] for item in first_payload["documents"]] == ["docs/index.md"]
 
 
@@ -1314,6 +1321,95 @@ Text.
         assert "references files outside packet" in str(exc)
     else:
         raise AssertionError("Expected import_review to reject files outside the packet.")
+    assert not paths.findings.exists()
+
+
+def test_import_review_accepts_zero_finding_payload_and_persists_review(tmp_path) -> None:
+    repo = tmp_path
+    state_dir = repo / ".docgarden"
+    ensure_state_dirs(state_dir)
+    write(
+        state_dir / "config.yaml",
+        "repo_name: test-docgarden\nstrict_score_fail_threshold: 70\n",
+    )
+    write(repo / "AGENTS.md", "# AGENTS.md\n\n- Overview: docs/index.md\n")
+    write(
+        repo / "docs" / "index.md",
+        """---
+doc_id: docs-index
+doc_type: canonical
+domain: docs
+owner: kirby
+status: verified
+last_reviewed: 2026-03-08
+review_cycle_days: 30
+source_of_truth:
+  - AGENTS.md
+verification:
+  method: doc-reviewed
+  confidence: medium
+---
+
+# Docs Index
+
+## Purpose
+Text.
+
+## Scope
+Text.
+
+## Source of Truth
+Text.
+
+## Rules / Definitions
+Text.
+
+## Exceptions / Caveats
+Text.
+
+## Validation / How to verify
+Text.
+
+## Related docs
+Text.
+""",
+    )
+
+    _, packet_payload = prepare_review_packet(repo, state_dir, domains=["docs"])
+    import_path = repo / "review.json"
+    write_json(
+        import_path,
+        {
+            "packet_id": packet_payload["packet_id"],
+            "review_id": "docs-clean-pass",
+            "provenance": {"runner": "manual", "reviewer": "kirby"},
+            "findings": [],
+        },
+    )
+
+    paths = RepoPaths(
+        repo_root=repo,
+        state_dir=state_dir,
+        config=state_dir / "config.yaml",
+        findings=state_dir / "findings.jsonl",
+        plan=state_dir / "plan.json",
+        score=state_dir / "score.json",
+        quality=repo / "docs" / "QUALITY_SCORE.md",
+    )
+
+    stored_review_path, stored_payload, imported_findings, plan = import_review(
+        paths,
+        import_path,
+        imported_at=datetime(2026, 3, 9, 10, 0, 0),
+    )
+
+    assert stored_review_path == state_dir / "reviews" / "review-import-docs-clean-pass.json"
+    assert stored_payload["review_id"] == "docs-clean-pass"
+    assert stored_payload["findings"] == []
+    assert imported_findings == []
+    assert plan.current_focus is None
+    assert plan.ordered_findings == []
+    assert stored_review_path.exists()
     assert not paths.findings.exists()
 
 
