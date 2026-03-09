@@ -55,13 +55,13 @@ than this manually maintained reference pack.
 - `completed slice review`: a review pass against a slice that is already
   believed to be shipped.
 - `next agent`: the implementation agent starting the next queued slice after
-  S05.
+  S07.
 
 ## Prompt pack
 
-### 1. Implementation kickoff for the next agent after S05
+### 1. Implementation kickoff for the next agent after S07
 
-Use this when S01 through S05 have already been completed, reviewed, and
+Use this when S01 through S07 have already been completed, reviewed, and
 accepted as the current baseline.
 
 ```text
@@ -72,27 +72,28 @@ Start by reading:
 - docs/design-docs/docgarden-spec.md
 - docs/exec-plans/active/2026-03-09-docgarden-spec-slicing.md
 
-Your target slice is S06: “Generated-doc contract checks”.
+Your target slice is S08: “Routing quality detector for stale targets”.
 
 Primary goal:
-- enforce the generated-doc rules from the spec instead of only documenting
-  them
+- move beyond "route exists" toward "route points to the right kind of doc"
 
 Required changes:
-1. Validate the required generated-doc contract for `doc_type: generated`.
-2. Verify regeneration command presence.
-3. Compare generated-doc freshness against local upstream artifact or script
-   mtime when the source path is local.
-4. Degrade gracefully for non-local or non-file sources instead of emitting
-   misleading freshness failures.
+1. Detect AGENTS or index routes that point to archived, deprecated, or stale
+   docs when a better canonical route exists.
+2. Flag archive docs that are still routed as current truth.
+3. Optionally suggest the canonical replacement when `superseded_by` is
+   present.
 
 Likely files:
-- docgarden/scan_document_rules.py
-- docgarden/scan_alignment.py
+- docgarden/scan_linkage.py
+- docgarden/scanner.py
 - tests/test_docgarden.py
 
 Working style:
-- keep this slice tight; do not jump ahead into S07 workflow drift detection
+- keep this slice tight; do not jump ahead into S09 score trend and weighted
+  domain rollups
+- implement the code changes directly; do not run `docgarden slices` commands
+  or use the `docgarden-slice-orchestrator` skill inside this worker
 - do not revert unrelated user changes
 - if the current worktree contains unrelated dirty files, work around them
   carefully and commit only your touched paths
@@ -106,9 +107,9 @@ Documentation:
   discoveries, and decision log
 
 Definition of done:
-- generated docs missing provenance metadata receive findings
-- local upstream artifact timestamps can mark generated docs stale
-- non-local or non-file sources degrade gracefully
+- broken and low-quality routing are distinguishable finding types
+- archived docs routed from indexes are flagged
+- suggested replacements appear in evidence or recommended action when known
 - tests cover success paths and validation failures
 - repo scan remains clean after the change
 
@@ -369,15 +370,16 @@ Do not require generated-doc or workflow-drift behavior unless their absence
 prevents S05 from being useful on its own.
 ```
 
-### 7. PM review prompt for the next agent’s work against S06
+### 7. PM review prompt for the next agent’s work against S08
 
-Use this after the next implementation agent finishes S06.
+Use this after the next implementation agent finishes S08.
 
 ```text
 Act as a PM-style reviewer for the docgarden spec implementation in
 /Users/kirby/Projects/docgarden.
 
-You are reviewing the implementation of S06: “Generated-doc contract checks”.
+You are reviewing the implementation of S08: “Routing quality detector for
+stale targets”.
 
 Read first:
 - docs/design-docs/docgarden-spec.md
@@ -387,19 +389,19 @@ Read first:
 Review the implementation specifically against the S06 slice definition.
 
 Questions to answer:
-1. Do generated docs now receive specific, actionable findings when provenance
-   metadata is missing or incomplete?
-2. Does the implementation correctly check for regeneration command presence
-   without overfitting to one repo workflow?
-3. When the upstream artifact path is local, does freshness comparison behave
-   predictably and honestly?
-4. When the source is non-local, symbolic, or otherwise not safely stat-able,
-   does the tool degrade gracefully instead of claiming false freshness
-   precision?
-5. Did the implementation stay within S06, or did it sprawl into workflow-drift
-   detection, routing quality, or CI policy?
-6. Are the findings and recommended actions clear enough for an agent to repair
-   generated-doc issues without reading the whole spec?
+1. Are broken routes and low-quality-but-existing routes clearly distinguishable
+   in the findings model?
+2. Does the implementation catch AGENTS or index routes that still point to
+   archived, deprecated, or stale docs when a better canonical target exists?
+3. If a routed doc is archived or superseded, does the finding evidence or
+   recommended action point maintainers toward the better replacement when
+   available?
+4. Does the detector avoid spurious routing findings for healthy canonical
+   routes?
+5. Did the implementation stay within S08, or did it sprawl into S09 score
+   rollups, autofix expansion, or CI automation?
+6. Are the routing-quality findings actionable enough for an agent or
+   maintainer to update the doc routes without re-reading the full spec?
 
 Deliverable:
 - findings first, ordered by severity
@@ -410,12 +412,12 @@ Deliverable:
   - testing/documentation gap
 - explicitly call out any hidden product decisions not stated in the slice
 - end with a short recommendation:
-  - ready for S07
-  - revise before S07
+  - ready for S09
+  - revise before S09
   - blocked pending product clarification
 
-Do not require workflow-drift or routing-quality behavior unless their absence
-prevents S06 from being useful on its own.
+Do not require S09 score-rollup behavior unless its absence prevents S08 from
+being useful on its own.
 ```
 
 ## Exceptions / Caveats
