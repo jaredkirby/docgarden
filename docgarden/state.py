@@ -20,9 +20,11 @@ from .models import (
     RESOLVED_FINDING_STATUSES,
     SCORE_RELEVANT_FINDING_STATUSES,
     Finding,
+    PLAN_LIFECYCLE_STAGES,
     PlanState,
     RepoPaths,
     Scorecard,
+    TRIAGE_LIFECYCLE_STAGES,
 )
 
 RESOLUTION_METADATA_FIELDS = (
@@ -31,6 +33,12 @@ RESOLUTION_METADATA_FIELDS = (
     "resolution_note",
     "resolved_at",
 )
+TRIAGE_STAGE_TRANSITIONS = {
+    "observe": frozenset({"observe", "reflect"}),
+    "reflect": frozenset({"reflect", "organize"}),
+    "organize": frozenset({"organize"}),
+    "complete": frozenset({"observe"}),
+}
 
 
 def ensure_state_dirs(state_dir: Path) -> None:
@@ -281,8 +289,8 @@ def load_score(path: Path) -> Scorecard | None:
 def load_plan(path: Path) -> PlanState:
     payload = _load_state_object(path, label="plan")
     try:
-        return PlanState(**payload)
-    except TypeError as exc:
+        return PlanState.from_dict(payload)
+    except (TypeError, ValueError) as exc:
         raise StateError(
             f"Invalid plan state at {path}: payload does not match PlanState."
         ) from exc
@@ -346,18 +354,26 @@ def build_plan(
         and previous_plan.current_focus not in deferred_items
     ):
         current_focus = previous_plan.current_focus
+    lifecycle_stage = "complete"
+    if ordered_ids:
+        if previous_plan is None:
+            lifecycle_stage = "observe"
+        elif previous_plan.lifecycle_stage == "complete":
+            lifecycle_stage = "observe"
+        else:
+            lifecycle_stage = previous_plan.lifecycle_stage
     return PlanState(
         updated_at=scan_time.isoformat(timespec="seconds"),
-        lifecycle_stage=(
-            previous_plan.lifecycle_stage
-            if previous_plan is not None and ordered_ids
-            else ("observe" if ordered_ids else "complete")
-        ),
+        lifecycle_stage=lifecycle_stage,
         current_focus=current_focus,
         ordered_findings=ordered_ids,
         clusters=dict(clusters),
         deferred_items=deferred_items,
         last_scan_hash=scan_hash,
+        stage_notes=(
+            dict(previous_plan.stage_notes) if previous_plan is not None else {}
+        ),
+        strategy_text=previous_plan.strategy_text if previous_plan is not None else None,
     )
 
 
@@ -366,3 +382,53 @@ def compute_scan_hash(paths: list[str]) -> str:
     for path in sorted(paths):
         digest.update(path.encode("utf-8"))
     return digest.hexdigest()
+
+
+def record_plan_triage_stage(
+    plan_path: Path,
+    *,
+    stage: str,
+    report: str,
+    updated_at: datetime,
+) -> PlanState:
+    if stage not in TRIAGE_LIFECYCLE_STAGES:
+        raise StateError(f"Unsupported triage stage: {stage}.")
+
+    normalized_report = report.strip()
+    if not normalized_report:
+        raise StateError("Triage report must be a non-empty string.")
+
+    plan = load_plan(plan_path)
+    if not plan.ordered_findings:
+        raise StateError(
+            "Cannot record triage stages when there are no actionable findings."
+        )
+
+    if plan.lifecycle_stage not in PLAN_LIFECYCLE_STAGES:
+        raise StateError(
+            f"Cannot transition plan with unsupported lifecycle stage: {plan.lifecycle_stage}."
+        )
+
+    allowed_transitions = TRIAGE_STAGE_TRANSITIONS[plan.lifecycle_stage]
+    if stage not in allowed_transitions:
+        allowed = ", ".join(sorted(allowed_transitions))
+        raise StateError(
+            f"Cannot move plan triage from {plan.lifecycle_stage} to {stage}; "
+            f"allowed stages: {allowed}."
+        )
+
+    updated_notes = dict(plan.stage_notes)
+    updated_notes[stage] = normalized_report
+    updated_plan = PlanState(
+        updated_at=updated_at.isoformat(timespec="seconds"),
+        lifecycle_stage=stage,
+        current_focus=plan.current_focus,
+        ordered_findings=list(plan.ordered_findings),
+        clusters=dict(plan.clusters),
+        deferred_items=list(plan.deferred_items),
+        last_scan_hash=plan.last_scan_hash,
+        stage_notes=updated_notes,
+        strategy_text=plan.strategy_text,
+    )
+    write_json(plan_path, asdict(updated_plan))
+    return updated_plan

@@ -61,6 +61,9 @@ spec sections to PR-sized implementation units.
 - 2026-03-09: Routed the backlog from the design-doc and plan indexes.
 - 2026-03-09: Added reusable implementation and PM-review prompts for S01 and S02 handoff.
 - 2026-03-09: Refreshed the backlog and prompt pack after confirming S01 and S02 were completed in code.
+- 2026-03-09: Implemented S03 plan triage stages with explicit `observe`, `reflect`, and `organize` commands backed by `plan.json`.
+- 2026-03-09: Extended persisted plan state to carry per-stage notes and optional strategy text without changing the append-only findings history contract.
+- 2026-03-09: Added CLI and state tests covering triage transitions, validation failures, and scan-time preservation of plan-stage metadata.
 
 ## Discoveries
 
@@ -72,6 +75,11 @@ spec sections to PR-sized implementation units.
   than asking for a generic “does this match the spec?” pass.
 - The branch advanced faster than the docs, so the durable slice backlog needs
   occasional re-sync against the actual implementation state.
+- Keeping plan-state mutations out of `findings.jsonl` makes the workflow stage
+  machine much easier to reason about: scans still own observation history,
+  while triage only reshapes operator intent in `plan.json`.
+- Scan-time plan rebuilding needs to preserve stored stage notes and strategy
+  text so triage work survives ordinary rescans.
 
 ## Decision Log
 
@@ -79,6 +87,11 @@ spec sections to PR-sized implementation units.
   implementers can use it outside a single active task.
 - 2026-03-09: Keep the decomposition generic to `docgarden` infrastructure and
   explicitly defer RMN-specific detectors until the core loop is more mature.
+- 2026-03-09: Model S03 as a validated lifecycle stage machine in `plan.json`
+  instead of adding synthetic finding events for triage progress.
+- 2026-03-09: Preserve `strategy_text` in the plan schema during S03 so the
+  later `--complete --strategy` slice can land without another state-format
+  migration.
 
 ## Outcomes / Retrospective
 

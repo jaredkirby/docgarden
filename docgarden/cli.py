@@ -9,6 +9,7 @@ from .cli_commands import (
     command_fix_safe,
     command_next,
     command_plan,
+    command_plan_triage,
     command_quality_write,
     command_scan,
     command_show,
@@ -32,6 +33,15 @@ def build_parser() -> argparse.ArgumentParser:
 
     plan = subparsers.add_parser("plan")
     plan.set_defaults(func=command_plan)
+    plan_subparsers = plan.add_subparsers(dest="plan_command")
+    plan_triage = plan_subparsers.add_parser("triage")
+    plan_triage.add_argument(
+        "--stage",
+        choices=["observe", "reflect", "organize"],
+        required=True,
+    )
+    plan_triage.add_argument("--report", required=True)
+    plan_triage.set_defaults(func=command_plan_triage)
 
     show = subparsers.add_parser("show")
     show.add_argument("finding_id")

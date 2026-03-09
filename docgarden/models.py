@@ -26,6 +26,8 @@ ATTESTATION_REQUIRED_FINDING_STATUSES = frozenset(
     {"accepted_debt", "needs_human", "false_positive"}
 )
 RESOLVED_FINDING_STATUSES = frozenset({"fixed", "accepted_debt", "false_positive"})
+PLAN_LIFECYCLE_STAGES = frozenset({"observe", "reflect", "organize", "complete"})
+TRIAGE_LIFECYCLE_STAGES = ("observe", "reflect", "organize")
 
 
 def _optional_string(value: Any) -> str | None:
@@ -36,6 +38,16 @@ def _string_list(value: Any) -> list[str]:
     if not isinstance(value, list):
         return []
     return [item for item in value if isinstance(item, str)]
+
+
+def _string_dict(value: Any) -> dict[str, str]:
+    if not isinstance(value, dict):
+        return {}
+    return {
+        key: item
+        for key, item in value.items()
+        if isinstance(key, str) and isinstance(item, str) and item
+    }
 
 
 @dataclass(frozen=True, slots=True)
@@ -142,6 +154,7 @@ class Scorecard:
     top_gaps: list[str]
     trend: dict[str, Any]
 
+
 @dataclass(slots=True)
 class PlanState:
     updated_at: str
@@ -151,6 +164,48 @@ class PlanState:
     clusters: dict[str, list[str]]
     deferred_items: list[str]
     last_scan_hash: str
+    stage_notes: dict[str, str] = field(default_factory=dict)
+    strategy_text: str | None = None
+
+    @classmethod
+    def from_dict(cls, payload: dict[str, Any]) -> "PlanState":
+        lifecycle_stage = str(payload.get("lifecycle_stage", "complete"))
+        if lifecycle_stage not in PLAN_LIFECYCLE_STAGES:
+            raise ValueError(f"Unsupported plan lifecycle stage: {lifecycle_stage}.")
+
+        stage_notes = {
+            stage: note
+            for stage, note in _string_dict(payload.get("stage_notes")).items()
+            if stage in TRIAGE_LIFECYCLE_STAGES
+        }
+
+        return cls(
+            updated_at=str(payload["updated_at"]),
+            lifecycle_stage=lifecycle_stage,
+            current_focus=_optional_string(payload.get("current_focus")),
+            ordered_findings=_string_list(payload.get("ordered_findings")),
+            clusters={
+                cluster: _string_list(finding_ids)
+                for cluster, finding_ids in _string_dict_list(
+                    payload.get("clusters")
+                ).items()
+            },
+            deferred_items=_string_list(payload.get("deferred_items")),
+            last_scan_hash=str(payload["last_scan_hash"]),
+            stage_notes=stage_notes,
+            strategy_text=_optional_string(payload.get("strategy_text")),
+        )
+
+
+def _string_dict_list(value: Any) -> dict[str, list[str]]:
+    if not isinstance(value, dict):
+        return {}
+    return {
+        key: _string_list(item)
+        for key, item in value.items()
+        if isinstance(key, str)
+    }
+
 
 @dataclass(slots=True)
 class RepoPaths:

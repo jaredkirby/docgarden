@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import asdict
 import json
 from datetime import datetime
 from pathlib import Path
@@ -7,7 +8,13 @@ from pathlib import Path
 from docgarden.errors import ConfigError, DocgardenError, StateError
 from docgarden.files import atomic_write_text
 from docgarden.markdown import parse_document, replace_frontmatter, resolve_link_target
-from docgarden.models import Finding, FindingContext, PlanState, RepoPaths, Scorecard
+from docgarden.models import (
+    Finding,
+    FindingContext,
+    PlanState,
+    RepoPaths,
+    Scorecard,
+)
 from docgarden.quality import build_scorecard, write_quality_score
 from docgarden.scan_alignment import (
     extract_validation_commands,
@@ -25,7 +32,9 @@ from docgarden.state import (
     ensure_state_dirs,
     latest_events_by_id,
     load_findings_history,
+    load_plan,
     ordered_active_events,
+    record_plan_triage_stage,
     write_json,
 )
 
@@ -227,10 +236,165 @@ def test_state_helpers_persist_findings_and_plan(tmp_path) -> None:
     plan = build_plan([finding], "abc123", scan_time)
     assert plan.current_focus == finding.id
     assert isinstance(plan, PlanState)
+    assert plan.stage_notes == {}
+    assert plan.strategy_text is None
 
     output_path = state_dir / "score.json"
     write_json(output_path, {"strict_score": 91})
     assert json.loads(output_path.read_text())["strict_score"] == 91
+
+
+def test_load_plan_supports_stage_notes_and_strategy_text_defaults(tmp_path) -> None:
+    plan_path = tmp_path / ".docgarden" / "plan.json"
+    write_json(
+        plan_path,
+        {
+            "updated_at": "2026-03-09T10:00:00",
+            "lifecycle_stage": "observe",
+            "current_focus": "finding::1",
+            "ordered_findings": ["finding::1"],
+            "clusters": {"docs": ["finding::1"]},
+            "deferred_items": [],
+            "last_scan_hash": "abc123",
+        },
+    )
+
+    plan = load_plan(plan_path)
+
+    assert plan.stage_notes == {}
+    assert plan.strategy_text is None
+
+
+def test_record_plan_triage_stage_updates_only_plan_state(tmp_path) -> None:
+    state_dir = tmp_path / ".docgarden"
+    ensure_state_dirs(state_dir)
+    findings_path = state_dir / "findings.jsonl"
+    plan_path = state_dir / "plan.json"
+
+    context = FindingContext(
+        rel_path="docs/index.md",
+        domain="docs",
+        discovered_at="2026-03-08T12:00:00",
+    )
+    finding = Finding.open_issue(
+        context,
+        kind="missing-sections",
+        severity="medium",
+        summary="Missing headings.",
+        evidence=["Missing headings: Scope"],
+        recommended_action="Add the missing section.",
+        safe_to_autofix=True,
+        cluster="structure-gaps",
+        suffix="sections",
+    )
+    append_scan_events(findings_path, [finding], datetime(2026, 3, 8, 12, 0, 0))
+    initial_plan = build_plan([finding], "abc123", datetime(2026, 3, 8, 12, 5, 0))
+    write_json(plan_path, asdict(initial_plan))
+
+    before_history = findings_path.read_text()
+    updated_plan = record_plan_triage_stage(
+        plan_path,
+        stage="observe",
+        report="Confirmed the actionable queue and grouped the obvious themes.",
+        updated_at=datetime(2026, 3, 8, 12, 10, 0),
+    )
+
+    assert findings_path.read_text() == before_history
+    assert updated_plan.lifecycle_stage == "observe"
+    assert updated_plan.stage_notes == {
+        "observe": "Confirmed the actionable queue and grouped the obvious themes."
+    }
+    assert load_plan(plan_path).stage_notes == updated_plan.stage_notes
+
+
+def test_record_plan_triage_stage_validates_stage_transitions(tmp_path) -> None:
+    state_dir = tmp_path / ".docgarden"
+    ensure_state_dirs(state_dir)
+    plan_path = state_dir / "plan.json"
+    write_json(
+        plan_path,
+        {
+            "updated_at": "2026-03-09T10:00:00",
+            "lifecycle_stage": "observe",
+            "current_focus": "finding::1",
+            "ordered_findings": ["finding::1"],
+            "clusters": {"docs": ["finding::1"]},
+            "deferred_items": [],
+            "last_scan_hash": "abc123",
+            "stage_notes": {},
+            "strategy_text": "Keep the first pass small and mechanical.",
+        },
+    )
+
+    try:
+        record_plan_triage_stage(
+            plan_path,
+            stage="organize",
+            report="Skipping directly to an execution plan.",
+            updated_at=datetime(2026, 3, 9, 10, 5, 0),
+        )
+    except StateError as exc:
+        assert str(exc) == (
+            "Cannot move plan triage from observe to organize; "
+            "allowed stages: observe, reflect."
+        )
+    else:
+        raise AssertionError("Expected triage transition validation to fail.")
+
+    try:
+        record_plan_triage_stage(
+            plan_path,
+            stage="observe",
+            report="   ",
+            updated_at=datetime(2026, 3, 9, 10, 5, 0),
+        )
+    except StateError as exc:
+        assert str(exc) == "Triage report must be a non-empty string."
+    else:
+        raise AssertionError("Expected blank triage report validation to fail.")
+
+
+def test_build_plan_preserves_notes_and_restarts_complete_cycle_on_new_findings(
+    tmp_path,
+) -> None:
+    context = FindingContext(
+        rel_path="docs/index.md",
+        domain="docs",
+        discovered_at="2026-03-08T12:00:00",
+    )
+    finding = Finding.open_issue(
+        context,
+        kind="missing-sections",
+        severity="medium",
+        summary="Missing headings.",
+        evidence=["Missing headings: Scope"],
+        recommended_action="Add the missing section.",
+        safe_to_autofix=True,
+        cluster="structure-gaps",
+        suffix="sections",
+    )
+    previous_plan = PlanState(
+        updated_at="2026-03-09T09:00:00",
+        lifecycle_stage="complete",
+        current_focus=None,
+        ordered_findings=[],
+        clusters={},
+        deferred_items=[],
+        last_scan_hash="oldhash",
+        stage_notes={"organize": "Prior queue was already shaped."},
+        strategy_text="Resume with the highest-signal doc cluster.",
+    )
+
+    plan = build_plan(
+        [finding],
+        "newhash",
+        datetime(2026, 3, 9, 10, 0, 0),
+        previous_plan=previous_plan,
+    )
+
+    assert plan.lifecycle_stage == "observe"
+    assert plan.stage_notes == {"organize": "Prior queue was already shaped."}
+    assert plan.strategy_text == "Resume with the highest-signal doc cluster."
 
 
 def test_state_helpers_preserve_manual_status_metadata_across_scans(tmp_path) -> None:

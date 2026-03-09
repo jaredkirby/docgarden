@@ -87,6 +87,8 @@ def test_cli_scan_status_and_plan_commands(tmp_path, monkeypatch, capsys) -> Non
     assert main(["plan"]) == 0
     plan_output = json.loads(capsys.readouterr().out)
     assert plan_output["current_focus"] is None
+    assert plan_output["stage_notes"] == {}
+    assert plan_output["strategy_text"] is None
 
     assert main(["doctor"]) == 0
     doctor_output = json.loads(capsys.readouterr().out)
@@ -376,6 +378,12 @@ Text.
         clusters={**original_plan.clusters, "manual/review": [beta_id]},
         deferred_items=[alpha_id],
         last_scan_hash=original_plan.last_scan_hash,
+        stage_notes={
+            "observe": "Reviewed the scan and pulled out the main queue themes.",
+            "reflect": "Compared the queue with the last round of fixes.",
+            "organize": "Front-loaded beta before alpha for the next pass.",
+        },
+        strategy_text="Work the stale docs cluster before any lower-severity cleanup.",
     )
     paths.plan.write_text(json.dumps(asdict(preserved_plan), indent=2, sort_keys=True) + "\n")
 
@@ -387,6 +395,144 @@ Text.
     assert updated_plan.ordered_findings[:2] == [beta_id, alpha_id]
     assert updated_plan.deferred_items == [alpha_id]
     assert updated_plan.clusters["manual/review"] == [beta_id]
+    assert updated_plan.stage_notes == preserved_plan.stage_notes
+    assert updated_plan.strategy_text == preserved_plan.strategy_text
+
+
+def test_cli_plan_triage_updates_plan_without_mutating_findings_history(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    repo = make_repo(tmp_path)
+    write(
+        repo / "docs" / "stale.md",
+        CANONICAL_FRONTMATTER.replace("docs-index", "stale-doc").replace(
+            "2026-03-08", "2026-01-01"
+        )
+        + """
+# Stale Doc
+
+## Purpose
+Text.
+
+## Scope
+Text.
+
+## Source of Truth
+Text.
+
+## Rules / Definitions
+Text.
+
+## Exceptions / Caveats
+Text.
+
+## Validation / How to verify
+Text.
+
+## Related docs
+Text.
+""",
+    )
+    monkeypatch.chdir(repo)
+
+    assert main(["scan"]) == 0
+    capsys.readouterr()
+
+    paths = repo_paths(repo)
+    findings_before = paths.findings.read_text()
+
+    assert main(
+        [
+            "plan",
+            "triage",
+            "--stage",
+            "observe",
+            "--report",
+            "Reviewed the queue and confirmed the stale-doc issue is the immediate priority.",
+        ]
+    ) == 0
+    observe_output = json.loads(capsys.readouterr().out)
+    assert observe_output["lifecycle_stage"] == "observe"
+    assert observe_output["stage_notes"]["observe"].startswith("Reviewed the queue")
+    assert paths.findings.read_text() == findings_before
+
+    assert main(
+        [
+            "plan",
+            "triage",
+            "--stage",
+            "reflect",
+            "--report",
+            "Compared the current stale-doc work against the last scan and kept the queue narrow.",
+        ]
+    ) == 0
+    reflect_output = json.loads(capsys.readouterr().out)
+    assert reflect_output["lifecycle_stage"] == "reflect"
+    assert set(reflect_output["stage_notes"]) == {"observe", "reflect"}
+    assert paths.findings.read_text() == findings_before
+
+    assert main(["plan"]) == 0
+    plan_output = json.loads(capsys.readouterr().out)
+    assert plan_output["lifecycle_stage"] == "reflect"
+    assert plan_output["stage_notes"]["observe"].startswith("Reviewed the queue")
+    assert plan_output["stage_notes"]["reflect"].startswith("Compared the current")
+
+
+def test_cli_plan_triage_reports_validation_failures(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    repo = make_repo(tmp_path)
+    write(
+        repo / "docs" / "stale.md",
+        CANONICAL_FRONTMATTER.replace("docs-index", "stale-doc").replace(
+            "2026-03-08", "2026-01-01"
+        )
+        + """
+# Stale Doc
+
+## Purpose
+Text.
+
+## Scope
+Text.
+
+## Source of Truth
+Text.
+
+## Rules / Definitions
+Text.
+
+## Exceptions / Caveats
+Text.
+
+## Validation / How to verify
+Text.
+
+## Related docs
+Text.
+""",
+    )
+    monkeypatch.chdir(repo)
+
+    assert main(["scan"]) == 0
+    capsys.readouterr()
+
+    assert main(
+        [
+            "plan",
+            "triage",
+            "--stage",
+            "organize",
+            "--report",
+            "Skipping directly to organization should fail.",
+        ]
+    ) == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert (
+        "Cannot move plan triage from observe to organize; allowed stages: observe, reflect."
+        in captured.err
+    )
 
 
 def test_cli_config_show_reports_invalid_config_with_nonzero_exit(

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 from dataclasses import asdict
+from datetime import datetime
 import json
 import sys
 from pathlib import Path
@@ -13,6 +14,7 @@ from .quality import write_quality_score
 from .scan_workflow import run_scan
 from .state import (
     ensure_state_dirs,
+    record_plan_triage_stage,
     load_findings_history,
     load_plan,
     load_score,
@@ -34,6 +36,12 @@ def repo_paths(repo_root: Path) -> RepoPaths:
         score=state_dir / "score.json",
         quality=repo_root / "docs" / "QUALITY_SCORE.md",
     )
+
+
+def _ensure_plan(paths: RepoPaths):
+    if not paths.plan.exists():
+        run_scan(paths)
+    return load_plan(paths.plan)
 
 
 def command_scan(_: argparse.Namespace) -> None:
@@ -78,9 +86,19 @@ def command_next(_: argparse.Namespace) -> None:
 
 def command_plan(_: argparse.Namespace) -> None:
     paths = repo_paths(Path.cwd())
-    if not paths.plan.exists():
-        run_scan(paths)
-    print(json.dumps(asdict(load_plan(paths.plan)), indent=2, sort_keys=True))
+    print(json.dumps(asdict(_ensure_plan(paths)), indent=2, sort_keys=True))
+
+
+def command_plan_triage(args: argparse.Namespace) -> None:
+    paths = repo_paths(Path.cwd())
+    _ensure_plan(paths)
+    updated_plan = record_plan_triage_stage(
+        paths.plan,
+        stage=args.stage,
+        report=args.report,
+        updated_at=datetime.now(),
+    )
+    print(json.dumps(asdict(updated_plan), indent=2, sort_keys=True))
 
 
 def command_show(args: argparse.Namespace) -> int:
