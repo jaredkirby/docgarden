@@ -147,6 +147,11 @@ printed run directory, inspect `run-status.json`, run `git status`, and then
 verify any partial work with `uv run pytest` and `uv run docgarden scan` before
 you decide whether to retry or recover manually.
 
+`docgarden slices recover` is baseline-aware. Its `tracked_changes` and
+`untracked_paths` fields report only changes that appeared after the run
+started, while `preexisting_*` and `current_*` fields show the full picture for
+operators working in already-dirty repos.
+
 `run-status.json` now updates during long worker/reviewer runs. The most useful
 live fields are:
 
@@ -157,6 +162,12 @@ live fields are:
 - `elapsed_seconds`: how long the current phase has been running
 - `agent_pid`: the local `codex exec` process id backing the current phase
 
+The same status file also snapshots repo state when the run starts:
+
+- `baseline_recorded_at`: when the runner captured the starting repo state
+- `baseline_tracked_changes`: tracked-file diffs that already existed before the run
+- `baseline_untracked_paths`: untracked paths that already existed before the run
+
 The operator control commands build on those artifacts:
 
 - `docgarden slices watch`
@@ -166,9 +177,10 @@ The operator control commands build on those artifacts:
   Sends `SIGTERM` to the `agent_pid` recorded in `run-status.json` and marks the
   run as `stopped`.
 - `docgarden slices recover`
-  Summarizes the run, reports current tracked/untracked repo changes, and by
-  default reruns `uv run pytest` plus `uv run docgarden scan` so operators can
-  judge whether a timed-out or interrupted run left reviewable work behind.
+  Summarizes the run, compares current repo state against the baseline captured
+  at run start, and by default reruns `uv run pytest` plus
+  `uv run docgarden scan` so operators can judge whether a timed-out or
+  interrupted run left reviewable work behind.
 - `docgarden slices retry`
   Starts a fresh retry run for the same slice using the prior run directory as
   context. If the earlier run already has worker/reviewer JSON artifacts, the

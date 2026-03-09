@@ -460,6 +460,9 @@ def test_cli_slices_run_revises_then_advances_to_next_slice(
     assert status["status"] == "ready_for_next_slice"
     assert status["worker_timeout_seconds"] == 900
     assert status["reviewer_timeout_seconds"] == 300
+    assert status["baseline_recorded_at"]
+    assert status["baseline_tracked_changes"] == []
+    assert status["baseline_untracked_paths"] == []
     assert status["phase_started_at"]
     assert status["last_heartbeat_at"]
     assert status["elapsed_seconds"] >= 0
@@ -827,8 +830,88 @@ def test_cli_slices_recover_runs_verification_and_reports_partial_changes(
     payload = json.loads(capsys.readouterr().out)
     assert payload["recovery_recommendation"] == "partial_repo_changes_need_review"
     assert payload["tracked_changes"] == ["docgarden/state.py"]
+    assert payload["current_tracked_changes"] == ["docgarden/state.py"]
+    assert payload["new_tracked_changes"] == ["docgarden/state.py"]
     assert payload["verification"]["pytest"]["returncode"] == 0
     assert payload["verification"]["scan"]["returncode"] == 0
+
+
+def test_cli_slices_recover_subtracts_preexisting_repo_state(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    repo = make_slice_repo(tmp_path)
+    run_dir = repo / ".docgarden" / "slice-loops" / "2026-03-09T101503-s10"
+    write_json(
+        run_dir / "run-status.json",
+        {
+            "slice_id": "S10",
+            "status": "failed",
+            "current_phase": "worker",
+            "baseline_recorded_at": "2026-03-09T10:15:02",
+            "baseline_tracked_changes": ["README.md"],
+            "baseline_untracked_paths": [".docgarden/slice-loops/"],
+            "error": "worker timed out",
+        },
+    )
+    monkeypatch.chdir(repo)
+    monkeypatch.setattr(
+        "docgarden.slices.runner._git_diff_name_only",
+        lambda repo_root: ["README.md", "docgarden/state.py"],
+    )
+    monkeypatch.setattr(
+        "docgarden.slices.runner._git_untracked_paths",
+        lambda repo_root: [".docgarden/slice-loops/", "scratch.txt"],
+    )
+
+    assert main(["slices", "recover", "--skip-verification"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["baseline_tracked_changes"] == ["README.md"]
+    assert payload["baseline_untracked_paths"] == [".docgarden/slice-loops/"]
+    assert payload["current_tracked_changes"] == ["README.md", "docgarden/state.py"]
+    assert payload["current_untracked_paths"] == [".docgarden/slice-loops/", "scratch.txt"]
+    assert payload["tracked_changes"] == ["docgarden/state.py"]
+    assert payload["untracked_paths"] == ["scratch.txt"]
+    assert payload["new_tracked_changes"] == ["docgarden/state.py"]
+    assert payload["new_untracked_paths"] == ["scratch.txt"]
+    assert payload["preexisting_tracked_changes"] == ["README.md"]
+    assert payload["preexisting_untracked_paths"] == [".docgarden/slice-loops/"]
+    assert payload["recovery_recommendation"] == "partial_repo_changes_need_review"
+
+
+def test_cli_slices_recover_ignores_only_preexisting_repo_state_for_retry(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    repo = make_slice_repo(tmp_path)
+    run_dir = repo / ".docgarden" / "slice-loops" / "2026-03-09T101504-s10"
+    write_json(
+        run_dir / "run-status.json",
+        {
+            "slice_id": "S10",
+            "status": "failed",
+            "current_phase": "worker",
+            "baseline_recorded_at": "2026-03-09T10:15:03",
+            "baseline_tracked_changes": ["README.md"],
+            "baseline_untracked_paths": [".docgarden/slice-loops/"],
+            "error": "worker timed out",
+        },
+    )
+    monkeypatch.chdir(repo)
+    monkeypatch.setattr(
+        "docgarden.slices.runner._git_diff_name_only",
+        lambda repo_root: ["README.md"],
+    )
+    monkeypatch.setattr(
+        "docgarden.slices.runner._git_untracked_paths",
+        lambda repo_root: [".docgarden/slice-loops/"],
+    )
+
+    assert main(["slices", "recover", "--skip-verification"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["tracked_changes"] == []
+    assert payload["untracked_paths"] == []
+    assert payload["preexisting_tracked_changes"] == ["README.md"]
+    assert payload["preexisting_untracked_paths"] == [".docgarden/slice-loops/"]
+    assert payload["recovery_recommendation"] == "safe_to_retry"
 
 
 def test_cli_slices_prune_dry_run_and_apply(tmp_path, monkeypatch, capsys) -> None:

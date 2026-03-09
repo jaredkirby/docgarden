@@ -46,6 +46,7 @@ DEFAULT_WORKER_TIMEOUT_SECONDS = 900
 DEFAULT_REVIEWER_TIMEOUT_SECONDS = 300
 RUN_STATUS_HEARTBEAT_SECONDS = 5.0
 RUN_ACTIVE_STATUSES = frozenset({"running"})
+NATIVE_POPEN = subprocess.Popen
 DEFAULT_PRUNABLE_RUN_STATUSES = frozenset(
     {
         "ready_for_next_slice",
@@ -265,6 +266,7 @@ def _run_single_slice(
 
     worker_outputs: list[str] = []
     review_outputs: list[str] = []
+    repo_baseline = _capture_repo_baseline(repo_root)
     status_payload = {
         "slice_id": slice_def.slice_id,
         "title": slice_def.title,
@@ -274,6 +276,7 @@ def _run_single_slice(
         "reviewer_timeout_seconds": reviewer_timeout_seconds,
         "worker_outputs": worker_outputs,
         "review_outputs": review_outputs,
+        **repo_baseline,
     }
     if retry_of is not None:
         status_payload["retry_of"] = retry_of
@@ -876,11 +879,27 @@ def recover_slice_run(
     verify: bool = True,
 ) -> dict[str, Any]:
     summary = summarize_slice_run(run_dir)
+    status = summary["status"]
+    baseline_tracked = _coerce_path_list(status.get("baseline_tracked_changes"))
+    baseline_untracked = _coerce_path_list(status.get("baseline_untracked_paths"))
+    current_tracked = _git_diff_name_only(repo_root)
+    current_untracked = _git_untracked_paths(repo_root)
+    new_tracked = _diff_repo_paths(current_tracked, baseline_tracked)
+    new_untracked = _diff_repo_paths(current_untracked, baseline_untracked)
     recovery: dict[str, Any] = {
         "run_dir": str(run_dir),
-        "status": summary["status"],
-        "tracked_changes": _git_diff_name_only(repo_root),
-        "untracked_paths": _git_untracked_paths(repo_root),
+        "status": status,
+        "baseline_recorded_at": status.get("baseline_recorded_at"),
+        "baseline_tracked_changes": baseline_tracked,
+        "baseline_untracked_paths": baseline_untracked,
+        "current_tracked_changes": current_tracked,
+        "current_untracked_paths": current_untracked,
+        "tracked_changes": new_tracked,
+        "untracked_paths": new_untracked,
+        "new_tracked_changes": new_tracked,
+        "new_untracked_paths": new_untracked,
+        "preexisting_tracked_changes": _overlap_repo_paths(current_tracked, baseline_tracked),
+        "preexisting_untracked_paths": _overlap_repo_paths(current_untracked, baseline_untracked),
         "worker_outputs": summary["worker_outputs"],
         "review_outputs": summary["review_outputs"],
     }
@@ -909,27 +928,35 @@ def _run_command_capture(command: list[str], *, cwd: Path) -> dict[str, Any]:
     }
 
 
-def _git_diff_name_only(repo_root: Path) -> list[str]:
-    completed = subprocess.run(
-        ["git", "diff", "--name-only"],
-        cwd=repo_root,
+def _capture_repo_baseline(repo_root: Path) -> dict[str, Any]:
+    return {
+        "baseline_recorded_at": _iso_now(),
+        "baseline_tracked_changes": _git_diff_name_only(repo_root),
+        "baseline_untracked_paths": _git_untracked_paths(repo_root),
+    }
+
+
+def _run_native_capture(command: list[str], *, cwd: Path) -> subprocess.CompletedProcess[str]:
+    process = NATIVE_POPEN(
+        command,
+        cwd=cwd,
         text=True,
-        capture_output=True,
-        check=False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
     )
+    stdout, stderr = process.communicate()
+    return subprocess.CompletedProcess(command, process.returncode or 0, stdout, stderr)
+
+
+def _git_diff_name_only(repo_root: Path) -> list[str]:
+    completed = _run_native_capture(["git", "diff", "--name-only"], cwd=repo_root)
     if completed.returncode != 0:
         return []
     return [line for line in completed.stdout.splitlines() if line.strip()]
 
 
 def _git_untracked_paths(repo_root: Path) -> list[str]:
-    completed = subprocess.run(
-        ["git", "status", "--short"],
-        cwd=repo_root,
-        text=True,
-        capture_output=True,
-        check=False,
-    )
+    completed = _run_native_capture(["git", "status", "--short"], cwd=repo_root)
     if completed.returncode != 0:
         return []
     paths: list[str] = []
@@ -939,9 +966,25 @@ def _git_untracked_paths(repo_root: Path) -> list[str]:
     return paths
 
 
+def _coerce_path_list(value: Any) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    return sorted(str(item) for item in value if isinstance(item, str) and item.strip())
+
+
+def _diff_repo_paths(current: list[str], baseline: list[str]) -> list[str]:
+    baseline_set = set(baseline)
+    return sorted(path for path in current if path not in baseline_set)
+
+
+def _overlap_repo_paths(current: list[str], baseline: list[str]) -> list[str]:
+    baseline_set = set(baseline)
+    return sorted(path for path in current if path in baseline_set)
+
+
 def _recovery_recommendation(payload: dict[str, Any]) -> str:
     status = payload.get("status")
-    tracked = payload.get("tracked_changes", [])
+    tracked = payload.get("new_tracked_changes", payload.get("tracked_changes", []))
     worker_outputs = payload.get("worker_outputs", [])
     review_outputs = payload.get("review_outputs", [])
     run_status = status.get("status") if isinstance(status, dict) else None

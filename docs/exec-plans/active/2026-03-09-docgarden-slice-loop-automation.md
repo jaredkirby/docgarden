@@ -83,6 +83,7 @@ inside `docgarden`.
 - 2026-03-09: Added operator-facing `docgarden slices watch`, `stop`, and `recover` commands so humans can inspect the latest run, stop an active pid-backed run cleanly, and rerun verification for timed-out or interrupted work without rebuilding the recovery flow manually.
 - 2026-03-09: Added `docgarden slices retry` so a failed or stopped run can spawn a fresh retry for the same slice while reusing prior worker/reviewer artifact paths to resume from the correct round when context already exists.
 - 2026-03-09: Added `docgarden slices list` and dry-run-first `docgarden slices prune` so operators can manage accumulated slice-loop artifact directories without ad-hoc shell cleanup.
+- 2026-03-09: Added baseline repo-state snapshots to `run-status.json` and taught `docgarden slices recover` to report post-baseline deltas separately from pre-existing dirty worktree state.
 
 ## Discoveries
 
@@ -104,6 +105,7 @@ inside `docgarden`.
 - Once a run is inspectable, operators also need first-class controls to act on it. Status visibility without `stop` and `recover` still leaves too much ad-hoc shell work when a run needs intervention.
 - Retry ergonomics matter too: after a failed or interrupted run, operators should not have to manually reconstruct revision context from scattered artifact files just to restart the next worker pass.
 - Artifact retention matters once the loop becomes useful; without list/prune helpers, the safer control-plane design just pushes operators back into manual filesystem cleanup.
+- Recovery recommendations get much more trustworthy when the runner remembers what the repo looked like at launch; otherwise `recover` cannot distinguish “the slice changed this” from “the operator was already mid-edit.”
 
 ## Decision Log
 
@@ -122,6 +124,7 @@ inside `docgarden`.
 - 2026-03-09: Treat run directories as the control plane for manual intervention too: the latest-run resolver, `watch`, `stop`, and `recover` all operate from the artifact directory instead of depending on parent-session state.
 - 2026-03-09: Use prior run artifacts as resume context, not as mutable state. `retry` creates a new run directory while threading the earlier worker/reviewer JSON paths into the next worker or reviewer step as appropriate.
 - 2026-03-09: Make artifact cleanup dry-run first. `prune` only deletes when `--apply` is passed and otherwise reports which finished runs would be removed after preserving the newest `--keep` entries.
+- 2026-03-09: Treat recovery as a diff against a recorded baseline, not just a snapshot of the current worktree, so dirty repos can still get actionable retry-vs-review guidance.
 
 ## Outcomes / Retrospective
 

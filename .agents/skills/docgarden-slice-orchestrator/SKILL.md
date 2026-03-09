@@ -154,7 +154,8 @@ When `docgarden slices run` times out:
 1. Read the printed artifact directory path and inspect `run-status.json`.
    Focus on `current_phase`, `phase_started_at`, `last_heartbeat_at`, and
    `elapsed_seconds` before deciding whether the run is merely busy or truly
-   wedged.
+   wedged. If the repo was already dirty before the run started, also note
+   `baseline_tracked_changes` and `baseline_untracked_paths`.
 2. Check whether the worker wrote partial progress to the repo with `git status`.
 3. Read `.stdout.txt` / `.stderr.txt` to distinguish a slow implementation from
    an actual launch failure.
@@ -173,7 +174,8 @@ If you need operator controls instead of manual shell work:
 - `uv run docgarden slices stop --run-dir <run-dir>` to stop the recorded pid
   and mark the run `stopped`
 - `uv run docgarden slices recover --run-dir <run-dir>` to summarize repo
-  changes and rerun verification without rediscovering the recovery workflow
+  changes, compare them against the repo baseline captured at run start, and
+  rerun verification without rediscovering the recovery workflow
 - `uv run docgarden slices retry --run-dir <run-dir>` to launch a fresh retry
   run for the same slice, reusing prior worker/reviewer outputs when they exist
   so the resumed worker starts with the right revision context
