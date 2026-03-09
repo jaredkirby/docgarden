@@ -38,6 +38,19 @@ review_cycle_days: 30
 ---
 """
 
+ARCHIVE_FRONTMATTER = """---
+doc_id: archived-doc
+doc_type: archive
+domain: archive
+owner: kirby
+status: archived
+last_reviewed: 2026-03-08
+review_cycle_days: 30
+superseded_by:
+  - docs/current.md
+---
+"""
+
 
 def write(path: Path, content: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -71,6 +84,85 @@ Text.
 
 ## Related docs
 {extra_body}
+""",
+    )
+
+
+def write_canonical_doc(
+    repo: Path,
+    rel_path: str,
+    *,
+    doc_id: str,
+    title: str,
+    status: str = "verified",
+    extra_frontmatter: str = "",
+    related_docs: str = "Text.",
+) -> None:
+    frontmatter = CANONICAL_FRONTMATTER.replace(
+        "doc_id: docs-index", f"doc_id: {doc_id}"
+    ).replace("status: verified", f"status: {status}")
+    if extra_frontmatter:
+        frontmatter = frontmatter.replace(
+            "review_cycle_days: 30\n",
+            "review_cycle_days: 30\n" + extra_frontmatter,
+            1,
+        )
+    write(
+        repo / rel_path,
+        frontmatter
+        + f"""
+# {title}
+
+## Purpose
+Text.
+
+## Scope
+Text.
+
+## Source of Truth
+Text.
+
+## Rules / Definitions
+Text.
+
+## Exceptions / Caveats
+Text.
+
+## Validation / How to verify
+Text.
+
+## Related docs
+{related_docs}
+""",
+    )
+
+
+def write_archive_doc(
+    repo: Path,
+    rel_path: str,
+    *,
+    doc_id: str,
+    title: str,
+    replacement: str = "docs/current.md",
+) -> None:
+    frontmatter = (
+        ARCHIVE_FRONTMATTER.replace("doc_id: archived-doc", f"doc_id: {doc_id}")
+        .replace("docs/current.md", replacement)
+    )
+    write(
+        repo / rel_path,
+        frontmatter
+        + f"""
+# {title}
+
+## Archived reason
+Text.
+
+## Archived date
+2026-03-08
+
+## Replacement doc, if any
+- [{Path(replacement).name}]({replacement})
 """,
     )
 
@@ -306,6 +398,80 @@ Text.
             "invalid-validation-command::docs::index.md::"
             "command-docgarden-review-prepare-a6b2277df6",
         )
+
+    def test_scan_distinguishes_broken_and_stale_routes(self) -> None:
+        repo = self.make_repo()
+        write(
+            repo / "AGENTS.md",
+            "# AGENTS.md\n\n- Overview: docs/index.md\n- Legacy: docs/missing.md\n",
+        )
+        write_docs_index(repo, extra_body="\n- [Legacy Plan](archive/legacy-plan.md)\n")
+        write_archive_doc(
+            repo,
+            "docs/archive/legacy-plan.md",
+            doc_id="legacy-plan",
+            title="Legacy Plan",
+        )
+        write_canonical_doc(
+            repo,
+            "docs/current.md",
+            doc_id="current-doc",
+            title="Current Doc",
+        )
+
+        findings, _, _ = scan_repo(repo)
+
+        self.assertIn("broken-route", [item.kind for item in findings])
+        self.assertIn("stale-route", [item.kind for item in findings])
+
+    def test_scan_flags_archived_index_route_with_canonical_replacement(self) -> None:
+        repo = self.make_repo()
+        write_docs_index(repo, extra_body="\n- [Legacy Plan](archive/legacy-plan.md)\n")
+        write_archive_doc(
+            repo,
+            "docs/archive/legacy-plan.md",
+            doc_id="legacy-plan",
+            title="Legacy Plan",
+        )
+        write_canonical_doc(
+            repo,
+            "docs/current.md",
+            doc_id="current-doc",
+            title="Current Doc",
+        )
+
+        findings, _, _ = scan_repo(repo)
+
+        self.assertEqual([item.kind for item in findings], ["stale-route"])
+        self.assertEqual(
+            findings[0].summary,
+            "docs/index.md routes current readers to an archived doc: "
+            "docs/archive/legacy-plan.md.",
+        )
+        self.assertIn(
+            "Suggested canonical replacement: docs/current.md",
+            findings[0].evidence,
+        )
+        self.assertEqual(
+            findings[0].recommended_action,
+            "Update the route to point at docs/current.md instead of "
+            "docs/archive/legacy-plan.md.",
+        )
+
+    def test_scan_skips_stale_route_without_canonical_replacement(self) -> None:
+        repo = self.make_repo()
+        write_docs_index(repo, extra_body="\n- [Needs Review](stale.md)\n")
+        write_canonical_doc(
+            repo,
+            "docs/stale.md",
+            doc_id="stale-doc",
+            title="Stale Doc",
+            status="stale",
+        )
+
+        findings, _, _ = scan_repo(repo)
+
+        self.assertEqual(findings, [])
 
     def test_scan_flags_invalid_docgarden_validation_command_in_subheading(self) -> None:
         repo = self.make_repo()

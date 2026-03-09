@@ -5,6 +5,7 @@ from pathlib import Path
 
 from .markdown import Document, resolve_link_target
 from .models import Finding, FindingContext
+from .scan_alignment import stable_suffix
 from .scan_document_rules import document_domain
 
 
@@ -35,6 +36,31 @@ def collect_domain_doc_counts(documents: list[Document]) -> dict[str, int]:
         if is_docs_rel_path(document.rel_path) and document.frontmatter:
             domain_doc_counts[document_domain(document)] += 1
     return dict(domain_doc_counts)
+
+
+def is_current_truth_router(rel_path: str) -> bool:
+    path = Path(rel_path)
+    return rel_path == "AGENTS.md" or (
+        path.parts[:1] == ("docs",) and path.name == "index.md"
+    )
+
+
+def current_truth_route_targets(document: Document, *, repo_root: Path) -> list[str]:
+    targets = {
+        routed_path
+        for routed_path in document.routed_paths
+        if routed_path == "AGENTS.md" or is_docs_rel_path(routed_path)
+    }
+    for link in document.links:
+        target = resolve_link_target(document.path, repo_root, link)
+        if not target or not target.exists():
+            continue
+        relative_target = repo_relative_path(repo_root, target)
+        if relative_target is None:
+            continue
+        if relative_target == "AGENTS.md" or is_docs_rel_path(relative_target):
+            targets.add(relative_target)
+    return sorted(targets)
 
 
 def scan_agents_document(
@@ -122,6 +148,125 @@ def broken_route_findings(
                 suffix=f"route-{abs(hash(target))}",
             )
         )
+    return findings
+
+
+def _string_list(value: object) -> list[str]:
+    if isinstance(value, str):
+        return [value]
+    if isinstance(value, list):
+        return [item for item in value if isinstance(item, str)]
+    return []
+
+
+def canonical_route_replacements(
+    document: Document,
+    *,
+    repo_root: Path,
+    documents_by_rel_path: dict[str, Document],
+) -> list[str]:
+    replacements: list[str] = []
+    for raw_target in _string_list(document.frontmatter.get("superseded_by")):
+        target = resolve_link_target(document.path, repo_root, raw_target)
+        if not target or not target.exists():
+            continue
+        relative_target = repo_relative_path(repo_root, target)
+        if relative_target is None:
+            continue
+        replacement = documents_by_rel_path.get(relative_target)
+        if not replacement or not replacement.frontmatter:
+            continue
+        if replacement.frontmatter.get("doc_type") != "canonical":
+            continue
+        if replacement.frontmatter.get("status") in {"stale", "deprecated", "archived"}:
+            continue
+        replacements.append(replacement.rel_path)
+    return sorted(set(replacements))
+
+
+def route_quality_findings(
+    repo_root: Path,
+    documents: list[Document],
+    *,
+    discovered_at: str,
+) -> list[Finding]:
+    findings: list[Finding] = []
+    documents_by_rel_path = {document.rel_path: document for document in documents}
+
+    for source, source_document in sorted(documents_by_rel_path.items()):
+        if not is_current_truth_router(source):
+            continue
+        for target in current_truth_route_targets(source_document, repo_root=repo_root):
+            target_document = documents_by_rel_path.get(target)
+            if not target_document or not target_document.frontmatter:
+                continue
+
+            target_doc_type = str(target_document.frontmatter.get("doc_type", "unknown"))
+            target_status = str(target_document.frontmatter.get("status", "unknown"))
+            replacements = canonical_route_replacements(
+                target_document,
+                repo_root=repo_root,
+                documents_by_rel_path=documents_by_rel_path,
+            )
+
+            route_issue: str | None = None
+            if target_doc_type == "archive" or target_status == "archived":
+                route_issue = "archived"
+            elif target_status == "deprecated":
+                route_issue = "deprecated"
+            elif target_status == "stale" and replacements:
+                route_issue = "stale"
+
+            if route_issue is None:
+                continue
+
+            issue_label = (
+                "an archived"
+                if route_issue == "archived"
+                else f"a {route_issue}"
+            )
+
+            evidence = [
+                f"Route target: {target_document.rel_path}",
+                f"Target doc_type={target_doc_type}",
+                f"Target status={target_status}",
+            ]
+            if replacements:
+                evidence.append(
+                    "Suggested canonical replacement: " + ", ".join(replacements)
+                )
+
+            recommended_action = (
+                "Update the route to point at "
+                + ", ".join(replacements)
+                + f" instead of {target_document.rel_path}."
+                if replacements
+                else "Replace the route with a current canonical doc or remove it from the current-truth index."
+            )
+            context = FindingContext(
+                rel_path=source,
+                domain="docs",
+                discovered_at=discovered_at,
+            )
+            findings.append(
+                Finding.open_issue(
+                    context,
+                    kind="stale-route",
+                    severity="high" if source == "AGENTS.md" else "medium",
+                    summary=(
+                        f"{source} routes current readers to {issue_label} doc: "
+                        f"{target_document.rel_path}."
+                    ),
+                    evidence=evidence,
+                    recommended_action=recommended_action,
+                    safe_to_autofix=False,
+                    cluster="routing-drift",
+                    suffix=stable_suffix(
+                        "route-quality", f"{source}->{target_document.rel_path}"
+                    ),
+                )
+            )
+
     return findings
 
 

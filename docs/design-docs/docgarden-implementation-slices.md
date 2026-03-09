@@ -72,7 +72,7 @@ criteria rather than re-explaining the whole product vision.
 | S05 | completed | Changed-scope scans | S00 |
 | S06 | completed | Generated-doc contract checks | S00 |
 | S07 | completed | Workflow drift detector | S01 |
-| S08 | queued | Routing quality detector for stale targets | S01 |
+| S08 | completed | Routing quality detector for stale targets | S01 |
 | S09 | queued | Score trend and weighted domain rollups | S02 |
 | S10 | queued | Review packet preparation and import | S02, S03 |
 | S11 | queued | Safe autofix expansion | S07, S08 |
@@ -104,6 +104,9 @@ The repo has also completed the first six generic Phase 2 slices:
 - workflow drift checks that scan workflow-style sections for missing
   repo-owned local asset references while ignoring external references and
   keeping false positives low on design-doc planning content
+- routing quality checks that keep `broken-route` findings distinct from
+  `stale-route` findings and flag AGENTS/index routes that still point current
+  readers at archived, deprecated, or superseded stale docs
 
 ## Atomic slices
 
@@ -291,7 +294,7 @@ Acceptance:
 
 ### S08: Routing quality detector for stale targets
 
-Status: `queued`
+Status: `completed`
 
 Goal:
 - Move beyond "route exists" toward "route points to the right kind of doc".

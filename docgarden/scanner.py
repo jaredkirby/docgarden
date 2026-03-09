@@ -29,6 +29,7 @@ from .scan_linkage import (
     collect_domain_doc_counts,
     duplicate_doc_id_findings,
     orphan_doc_findings,
+    route_quality_findings,
     scan_agents_document,
 )
 
@@ -40,6 +41,7 @@ CHANGED_SCOPE_RECOMPUTED_VIEWS = [
 CHANGED_SCOPE_SKIPPED_VIEWS = [
     "repo-wide duplicate doc_id checks",
     "repo-wide broken-route checks",
+    "repo-wide stale-route quality checks",
     "repo-wide orphan-doc checks",
     "durable .docgarden findings, plan, and score updates",
 ]
@@ -491,6 +493,13 @@ def scan_repo(repo_root: Path) -> tuple[list[Finding], dict[str, int], list[Docu
             repo_root,
             routed_targets,
             inbound_links,
+            discovered_at=discovered_at,
+        )
+    )
+    findings.extend(
+        route_quality_findings(
+            repo_root,
+            documents,
             discovered_at=discovered_at,
         )
     )

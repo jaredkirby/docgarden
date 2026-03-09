@@ -84,6 +84,9 @@ spec sections to PR-sized implementation units.
 - 2026-03-09: Updated the durable slice backlog and README so they now reflect S06 as completed and point the next handoff at S07 workflow drift detection.
 - 2026-03-09: Implemented S07 workflow drift detection by reusing shared markdown section/link helpers, scanning only workflow-like sections, and emitting actionable `missing-workflow-asset` findings for missing repo-owned local references.
 - 2026-03-09: Added regression coverage for the S07 detector so missing local workflow assets are caught while external URLs, virtualenv command examples, Python module invocations, and design-doc planning references stay quiet.
+- 2026-03-09: Implemented S08 routing quality detection so repo-wide scans now keep missing-target `broken-route` findings separate from `stale-route` findings when AGENTS or index docs still route readers to archived, deprecated, or superseded stale docs.
+- 2026-03-09: Extended routing-quality evidence and recommended actions to surface canonical replacements from `superseded_by` when the replacement resolves to a current canonical doc.
+- 2026-03-09: Added regression coverage for archived index routes, replacement suggestions, and the "stale only when a better canonical route exists" boundary.
 
 ## Discoveries
 
@@ -148,6 +151,9 @@ spec sections to PR-sized implementation units.
 - Freshness comparisons are only deterministic when generated timestamps carry
   an explicit offset, so the contract needs to reject naive timestamps instead
   of quietly interpreting them in host-local time.
+- Index routing quality cannot rely on AGENTS-style raw path extraction alone;
+  the scanner also has to inspect resolved markdown links because most index
+  docs route readers with relative links rather than repo-root path literals.
 
 ## Decision Log
 
@@ -194,6 +200,9 @@ spec sections to PR-sized implementation units.
   before freshness checks run, and treat single-token path snippets like
   `scripts/generate_schema.py` as non-runnable regeneration placeholders unless
   they are invoked as an actual command.
+- 2026-03-09: Model S08 as a separate `stale-route` detector scoped to AGENTS
+  and `index.md` current-truth routers, leaving `broken-route` focused on
+  missing targets so route existence and route quality stay distinguishable.
 
 ## Outcomes / Retrospective
 
