@@ -50,14 +50,14 @@ implementation work from spec-conformance review work.
 - `completed slice review`: a review pass against a slice that is already
   believed to be shipped.
 - `next agent`: the implementation agent starting the next queued slice after
-  S02.
+  S03.
 
 ## Prompt pack
 
-### 1. Implementation kickoff for the next agent after S02
+### 1. Implementation kickoff for the next agent after S03
 
-Use this when S01 and S02 have already been completed, reviewed, and accepted as
-the current baseline.
+Use this when S01, S02, and S03 have already been completed, reviewed, and
+accepted as the current baseline.
 
 ```text
 You’re implementing the next docgarden slice in /Users/kirby/Projects/docgarden.
@@ -67,19 +67,19 @@ Start by reading:
 - docs/design-docs/docgarden-spec.md
 - docs/exec-plans/active/2026-03-09-docgarden-spec-slicing.md
 
-Your target slice is S03: “Plan triage commands and lifecycle stages”.
+Your target slice is S04: “Focus and resolve queue operations”.
 
 Primary goal:
-- turn the current passive plan file into an explicit workflow stage machine
-  without mutating findings history
+- make the queue actionable instead of read-only while preserving append-only
+  findings history
 
 Required changes:
-1. Add `docgarden plan triage --stage observe --report ...`.
-2. Add `docgarden plan triage --stage reflect --report ...`.
-3. Add `docgarden plan triage --stage organize --report ...`.
-4. Persist stage notes and lifecycle stage in `plan.json`.
-5. Surface the current stage and stored notes via `docgarden plan`.
-6. Keep findings history append-only and separate from plan-state changes.
+1. Add `docgarden plan focus <cluster-or-id>`.
+2. Add `docgarden plan resolve <finding-id> --result ... --attest ...`.
+3. If it is low-risk and coherent, add reopen support for mistaken resolutions.
+4. Update plan state so `current_focus` changes predictably.
+5. Write new finding status events instead of mutating old history.
+6. Enforce attestation for non-trivial outcomes.
 
 Likely files:
 - docgarden/cli.py
@@ -90,7 +90,7 @@ Likely files:
 - tests/test_support_modules.py
 
 Working style:
-- keep this slice tight; do not jump ahead into S04 focus/resolve commands
+- keep this slice tight; do not jump ahead into S05 changed-scope scans
 - do not revert unrelated user changes
 - if the current worktree contains unrelated dirty files, work around them
   carefully and commit only your touched paths
@@ -104,9 +104,10 @@ Documentation:
   discoveries, and decision log
 
 Definition of done:
-- triage commands update plan state without mutating findings history
-- `plan.json` can hold stage notes and strategy text
-- tests cover stage transitions and validation failures
+- focus updates `current_focus` predictably
+- resolve writes append-only status events
+- non-trivial results require attestation text
+- tests cover success paths and validation failures
 - repo scan remains clean after the change
 
 Commit:
@@ -217,9 +218,9 @@ Do not grade the work on later-slice features unless their absence creates a
 real product risk for S02.
 ```
 
-### 4. PM review prompt for the next agent’s work against S03
+### 4. PM review prompt for the completed S03 work
 
-Use this after the next implementation agent finishes S03.
+Use this when you want a product/spec review of the shipped plan-triage slice.
 
 ```text
 Act as a PM-style reviewer for the docgarden spec implementation in
@@ -260,10 +261,61 @@ Deliverable:
 - end with a short recommendation:
   - ready for S04
   - revise before S04
-  - blocked pending product clarification
+- blocked pending product clarification
 
 Do not require focus/resolve behavior unless the lack of it prevents S03 from
 being useful on its own.
+```
+
+### 5. PM review prompt for the next agent’s work against S04
+
+Use this after the next implementation agent finishes S04.
+
+```text
+Act as a PM-style reviewer for the docgarden spec implementation in
+/Users/kirby/Projects/docgarden.
+
+You are reviewing the implementation of S04: “Focus and resolve queue
+operations”.
+
+Read first:
+- docs/design-docs/docgarden-spec.md
+- docs/design-docs/docgarden-implementation-slices.md
+- docs/exec-plans/active/2026-03-09-docgarden-spec-slicing.md
+
+Review the implementation specifically against the S04 slice definition.
+
+Questions to answer:
+1. Can users explicitly change queue focus in a way that is visible and
+   predictable?
+2. Does resolution create new append-only finding events rather than mutating
+   historical state?
+3. Are status outcomes mapped sensibly to the existing lifecycle model:
+   - fixed
+   - accepted_debt
+   - needs_human
+   - false_positive
+4. Is attestation required anywhere the spec expects honest friction?
+5. Did the implementation stay within S04, or did it sprawl into changed-scope
+   scans, CI automation, or review imports?
+6. Are the operator-facing commands and errors clear enough to use in a
+   repetitive workflow?
+
+Deliverable:
+- findings first, ordered by severity
+- classify each issue as:
+  - spec mismatch
+  - product ambiguity
+  - implementation risk
+  - testing/documentation gap
+- explicitly call out any hidden product decisions not stated in the slice
+- end with a short recommendation:
+  - ready for S05
+  - revise before S05
+  - blocked pending product clarification
+
+Do not require changed-scope scanning or review-packet behavior unless their
+absence prevents S04 from being useful on its own.
 ```
 
 ## Exceptions / Caveats
