@@ -9,6 +9,7 @@
 
 ## Where to look first
 - Overview: `docs/index.md`
+- Design intent: `docs/design-docs/`
 - Quality and trust map: `docs/QUALITY_SCORE.md`
 - Tool plans: `docs/PLANS.md`
 - Active work: `docs/exec-plans/active/`

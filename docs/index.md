@@ -40,6 +40,7 @@ and how multi-step work should be tracked.
 
 - `docs/index.md` is the primary documentation entry point.
 - Active implementation work belongs in `docs/exec-plans/active/`.
+- Design intent and future-shape specs live in `docs/design-docs/`.
 - Generated quality output is published in `docs/QUALITY_SCORE.md`.
 
 ## Exceptions / Caveats
@@ -56,5 +57,8 @@ and how multi-step work should be tracked.
 
 - [QUALITY_SCORE.md](QUALITY_SCORE.md)
 - [PLANS.md](PLANS.md)
+- [Design docs index](design-docs/index.md)
+- [Docgarden spec](design-docs/docgarden-spec.md)
 - [Docgarden MVP exec plan](exec-plans/active/2026-03-08-docgarden-mvp.md)
+- [Docgarden alignment phase 2 exec plan](exec-plans/active/2026-03-09-docgarden-alignment-phase-2.md)
 - [Desloppify code health exec plan](exec-plans/active/2026-03-08-desloppify-code-health.md)

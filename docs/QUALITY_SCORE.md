@@ -29,6 +29,7 @@ Updated: 2026-03-08
 - Strict: 100
 
 ## Domains
+- design-docs: 100 (high trust)
 - docs: 100 (high trust)
 - exec-plans: 100 (high trust)
 

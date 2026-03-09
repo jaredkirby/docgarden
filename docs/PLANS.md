@@ -30,6 +30,8 @@ work.
 ## Current Plans
 
 - [2026-03-08 docgarden MVP](exec-plans/active/2026-03-08-docgarden-mvp.md)
+- [2026-03-09 docgarden alignment phase 2](exec-plans/active/2026-03-09-docgarden-alignment-phase-2.md)
+- [2026-03-09 docgarden spec slicing](exec-plans/active/2026-03-09-docgarden-spec-slicing.md)
 
 ## Conventions
 
