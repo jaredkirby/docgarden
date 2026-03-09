@@ -64,6 +64,9 @@ planning, and stronger routing for durable design docs.
 
 - 2026-03-09: Added durable design-docs routing for the full product spec.
 - 2026-03-09: Started Phase 2 alignment detector implementation.
+- 2026-03-09: Verified the S01 alignment slice with targeted tests and added the
+  initial S02 finding lifecycle state model for richer statuses and
+  attestation-ready metadata.
 
 ## Discoveries
 
@@ -71,6 +74,9 @@ planning, and stronger routing for durable design docs.
   draft spec, so alignment checks need to respect doc status and trust level.
 - The current `Alignment to artifacts` score weight exists already, but it needs
   real detector coverage to be meaningful.
+- Scoring has to derive from the latest persisted finding state, not just the
+  raw detector output, or statuses like `accepted_debt` never affect
+  `overall_score`.
 
 ## Decision Log
 
@@ -80,6 +86,9 @@ planning, and stronger routing for durable design docs.
 - 2026-03-09: Start alignment detection with trustworthy local artifacts and
   repo-local `docgarden` commands before attempting broader schema or workflow
   drift.
+- 2026-03-09: Preserve append-only findings history by writing manual status
+  changes as new JSONL events and carrying their resolution metadata forward on
+  later observation events instead of mutating old lines.
 
 ## Outcomes / Retrospective
 
