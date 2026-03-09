@@ -41,6 +41,12 @@ For current automated runs, prefer `docgarden slices kickoff-prompt`,
 derive prompts directly from the slice backlog and are less likely to drift
 than this manually maintained reference pack.
 
+For implementation slices, assume the worker may need a longer time budget than
+the reviewer. In live operator runs, prefer `docgarden slices run
+--worker-timeout-seconds 900` over the older symmetric 300-second default so
+the implementation agent has room to finish a reviewable end-to-end cut before
+timing out.
+
 ## Source of Truth
 
 - [Implementation slices](docgarden-implementation-slices.md)
@@ -56,6 +62,9 @@ than this manually maintained reference pack.
   believed to be shipped.
 - `next agent`: the implementation agent starting the next queued slice after
   S07.
+- `bounded worker run`: an implementation pass that should prioritize the
+  smallest acceptance-complete change before optional cleanup so the slice stays
+  reviewable within its time budget.
 
 ## Prompt pack
 

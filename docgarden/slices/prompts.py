@@ -123,6 +123,8 @@ def build_implementation_prompt(
             "- implement the code changes directly; do not run `docgarden slices` commands or use the `docgarden-slice-orchestrator` skill inside this worker",
             "- do not revert unrelated user changes",
             "- if the worktree is dirty, work around unrelated edits and commit only the files you touched",
+            "- prioritize the smallest end-to-end change that satisfies the acceptance criteria before optional cleanup or polish",
+            "- assume this worker run has a bounded time budget; front-load the acceptance path and avoid spending that budget on nice-to-have extras",
             "",
             "Verification:",
             "- uv run pytest",

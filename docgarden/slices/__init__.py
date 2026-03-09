@@ -6,11 +6,17 @@ from .prompts import (
     build_implementation_prompt,
     build_review_prompt,
 )
-from .runner import run_slice_loop
+from .runner import (
+    DEFAULT_REVIEWER_TIMEOUT_SECONDS,
+    DEFAULT_WORKER_TIMEOUT_SECONDS,
+    run_slice_loop,
+)
 
 __all__ = [
     "REVIEW_OUTPUT_SCHEMA",
     "WORKER_OUTPUT_SCHEMA",
+    "DEFAULT_REVIEWER_TIMEOUT_SECONDS",
+    "DEFAULT_WORKER_TIMEOUT_SECONDS",
     "SliceAutomationPaths",
     "SliceCatalog",
     "SliceDefinition",

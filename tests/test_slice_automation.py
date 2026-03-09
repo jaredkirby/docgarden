@@ -13,6 +13,55 @@ def write(path: Path, content: str) -> None:
     path.write_text(content, encoding="utf-8")
 
 
+class FakePopen:
+    def __init__(
+        self,
+        cmd,
+        *,
+        stdout_file,
+        stderr_file,
+        response,
+        timeout_log,
+    ) -> None:
+        self.cmd = cmd
+        self.returncode: int | None = None
+        self._stdout_file = stdout_file
+        self._stderr_file = stderr_file
+        self._response = response
+        self._timeout_log = timeout_log
+        self._timed_out_once = False
+        self._emitted_output = False
+
+    def communicate(self, input=None, timeout=None):
+        self._timeout_log.append(timeout)
+        if input is not None:
+            assert isinstance(input, str)
+        if not self._emitted_output:
+            stdout_text = self._response.get("stdout", "")
+            stderr_text = self._response.get("stderr", "")
+            if stdout_text:
+                self._stdout_file.write(stdout_text)
+                self._stdout_file.flush()
+            if stderr_text:
+                self._stderr_file.write(stderr_text)
+                self._stderr_file.flush()
+
+            write_output = self._response.get("write_output")
+            if callable(write_output):
+                write_output(self.cmd)
+            self._emitted_output = True
+
+        if self._response.get("timeout") and not self._timed_out_once:
+            self._timed_out_once = True
+            raise subprocess.TimeoutExpired(cmd=self.cmd, timeout=timeout)
+
+        self.returncode = int(self._response.get("returncode", 0))
+        return ("", "")
+
+    def kill(self) -> None:
+        self.returncode = int(self._response.get("killed_returncode", -9))
+
+
 def make_slice_repo(tmp_path: Path) -> Path:
     write(tmp_path / ".docgarden" / "config.yaml", "repo_name: test-docgarden\n")
     write(tmp_path / "AGENTS.md", "# AGENTS.md\n\n- Overview: docs/index.md\n")
@@ -212,6 +261,7 @@ def test_cli_slices_prompt_commands_render_current_slice_context(
     assert "do not jump ahead into S08" in kickoff
     assert "do not run `docgarden slices` commands" in kickoff
     assert "`docgarden-slice-orchestrator` skill" in kickoff
+    assert "prioritize the smallest end-to-end change" in kickoff
 
     assert (
         main(
@@ -335,9 +385,12 @@ def test_cli_slices_run_revises_then_advances_to_next_slice(
             },
         ]
     )
+    timeouts: list[int | None] = []
 
-    def fake_run(cmd, cwd, input, text, capture_output, check, timeout, env):
-        assert timeout == 300
+    def fake_popen(cmd, cwd, stdin, stdout, stderr, text, env):
+        assert cwd == repo
+        assert stdin == subprocess.PIPE
+        assert text is True
         assert env is not None
         assert "CODEX_CI" not in env
         assert "CODEX_SANDBOX" not in env
@@ -348,15 +401,26 @@ def test_cli_slices_run_revises_then_advances_to_next_slice(
         assert "mcp_servers.pencil.enabled=false" in cmd
         assert "mcp_servers.openaiDeveloperDocs.enabled=false" in cmd
         assert "sandbox_workspace_write.network_access=true" in cmd
-        output_path = Path(cmd[cmd.index("--output-last-message") + 1])
-        payload = next(responses)
-        output_path.write_text(json.dumps(payload), encoding="utf-8")
-        return subprocess.CompletedProcess(cmd, 0, "ok\n", "")
 
-    monkeypatch.setattr("docgarden.slices.runner.subprocess.run", fake_run)
+        payload = next(responses)
+
+        def write_output(command) -> None:
+            output_path = Path(command[command.index("--output-last-message") + 1])
+            output_path.write_text(json.dumps(payload), encoding="utf-8")
+
+        return FakePopen(
+            cmd,
+            stdout_file=stdout,
+            stderr_file=stderr,
+            response={"stdout": "ok\n", "write_output": write_output},
+            timeout_log=timeouts,
+        )
+
+    monkeypatch.setattr("docgarden.slices.runner.subprocess.Popen", fake_popen)
 
     assert main(["slices", "run", "--max-slices", "2"]) == 0
-    summary = json.loads(capsys.readouterr().out)
+    captured = capsys.readouterr()
+    summary = json.loads(captured.out)
 
     assert summary["status"] == "completed"
     assert summary["processed_slices"] == 2
@@ -365,6 +429,9 @@ def test_cli_slices_run_revises_then_advances_to_next_slice(
     assert summary["results"][0]["recommendation"] == "ready_for_next_slice"
     assert summary["results"][1]["worker_rounds"] == 1
     assert summary["next_slice"] is None
+    assert timeouts == [900, 300, 900, 300, 900, 300]
+    assert "slice S07: artifacts ->" in captured.err
+    assert "slice S08: artifacts ->" in captured.err
 
     loop_root = repo / ".docgarden" / "slice-loops"
     run_dirs = sorted(path for path in loop_root.iterdir() if path.is_dir())
@@ -374,6 +441,10 @@ def test_cli_slices_run_revises_then_advances_to_next_slice(
     assert (first_run / "review-round-1.output.json").exists()
     assert (first_run / "worker-round-2.output.json").exists()
     assert (first_run / "review-round-2.output.json").exists()
+    status = json.loads((first_run / "run-status.json").read_text(encoding="utf-8"))
+    assert status["status"] == "ready_for_next_slice"
+    assert status["worker_timeout_seconds"] == 900
+    assert status["reviewer_timeout_seconds"] == 300
 
 
 def test_cli_slices_run_times_out_and_persists_partial_logs(
@@ -381,25 +452,38 @@ def test_cli_slices_run_times_out_and_persists_partial_logs(
 ) -> None:
     repo = make_slice_repo(tmp_path)
     monkeypatch.chdir(repo)
+    timeouts: list[int | None] = []
 
-    def fake_run(cmd, cwd, input, text, capture_output, check, timeout, env):
+    def fake_popen(cmd, cwd, stdin, stdout, stderr, text, env):
         assert env is not None
         assert "--ephemeral" in cmd
         assert "mcp_servers.pencil.enabled=false" in cmd
         assert "mcp_servers.openaiDeveloperDocs.enabled=false" in cmd
         assert "sandbox_workspace_write.network_access=true" in cmd
-        raise subprocess.TimeoutExpired(
-            cmd=cmd,
-            timeout=timeout,
-            output="partial stdout\n",
-            stderr="partial stderr\n",
+
+        def write_progress(_command) -> None:
+            write(repo / "docs" / "progress.md", "# Partial progress\n")
+
+        return FakePopen(
+            cmd,
+            stdout_file=stdout,
+            stderr_file=stderr,
+            response={
+                "stdout": "partial stdout\n",
+                "stderr": "partial stderr\n",
+                "write_output": write_progress,
+                "timeout": True,
+            },
+            timeout_log=timeouts,
         )
 
-    monkeypatch.setattr("docgarden.slices.runner.subprocess.run", fake_run)
+    monkeypatch.setattr("docgarden.slices.runner.subprocess.Popen", fake_popen)
 
     assert main(["slices", "run", "--agent-timeout-seconds", "12"]) == 1
     captured = capsys.readouterr()
     assert "timed out for worker-round-1 after 12 seconds" in captured.err
+    assert "slice S07: artifacts ->" in captured.err
+    assert timeouts == [12, None]
 
     run_dirs = sorted((repo / ".docgarden" / "slice-loops").iterdir())
     assert len(run_dirs) == 1
@@ -411,27 +495,44 @@ def test_cli_slices_run_times_out_and_persists_partial_logs(
         "partial stderr\n"
     )
     assert not (run_dir / "worker-round-1.output.json").exists()
+    status = json.loads((run_dir / "run-status.json").read_text(encoding="utf-8"))
+    assert status["status"] == "failed"
+    assert status["current_phase"] == "worker"
+    assert status["current_prefix"] == "worker-round-1"
+    assert "timed out for worker-round-1 after 12 seconds" in status["error"]
+    assert (repo / "docs" / "progress.md").exists()
 
 
 def test_cli_slices_run_nonzero_exit_persists_logs(tmp_path, monkeypatch, capsys) -> None:
     repo = make_slice_repo(tmp_path)
     monkeypatch.chdir(repo)
+    timeouts: list[int | None] = []
 
-    def fake_run(cmd, cwd, input, text, capture_output, check, timeout, env):
-        assert timeout == 300
+    def fake_popen(cmd, cwd, stdin, stdout, stderr, text, env):
         assert env is not None
         assert "--ephemeral" in cmd
         assert "mcp_servers.pencil.enabled=false" in cmd
         assert "mcp_servers.openaiDeveloperDocs.enabled=false" in cmd
         assert "sandbox_workspace_write.network_access=true" in cmd
-        return subprocess.CompletedProcess(cmd, 17, "agent stdout\n", "agent stderr\n")
+        return FakePopen(
+            cmd,
+            stdout_file=stdout,
+            stderr_file=stderr,
+            response={
+                "stdout": "agent stdout\n",
+                "stderr": "agent stderr\n",
+                "returncode": 17,
+            },
+            timeout_log=timeouts,
+        )
 
-    monkeypatch.setattr("docgarden.slices.runner.subprocess.run", fake_run)
+    monkeypatch.setattr("docgarden.slices.runner.subprocess.Popen", fake_popen)
 
     assert main(["slices", "run"]) == 1
     captured = capsys.readouterr()
     assert "exit code 17" in captured.err
     assert "worker-round-1.stderr.txt" in captured.err
+    assert timeouts == [900]
 
     run_dirs = sorted((repo / ".docgarden" / "slice-loops").iterdir())
     assert len(run_dirs) == 1
@@ -442,3 +543,91 @@ def test_cli_slices_run_nonzero_exit_persists_logs(tmp_path, monkeypatch, capsys
     assert (run_dir / "worker-round-1.stderr.txt").read_text(encoding="utf-8") == (
         "agent stderr\n"
     )
+    status = json.loads((run_dir / "run-status.json").read_text(encoding="utf-8"))
+    assert status["status"] == "failed"
+    assert status["worker_timeout_seconds"] == 900
+
+
+def test_cli_slices_run_supports_role_specific_timeouts(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    repo = make_slice_repo(tmp_path)
+    monkeypatch.chdir(repo)
+    timeouts: list[int | None] = []
+    responses = iter(
+        [
+            {
+                "status": "completed",
+                "summary": "Implemented S07.",
+                "files_touched": ["docgarden/scan_alignment.py"],
+                "tests_run": ["uv run pytest"],
+                "docs_updated": [],
+                "notes_for_reviewer": [],
+                "open_questions": [],
+            },
+            {
+                "recommendation": "ready_for_next_slice",
+                "summary": "S07 is ready.",
+                "findings": [],
+                "next_step": "Move on.",
+            },
+        ]
+    )
+
+    def fake_popen(cmd, cwd, stdin, stdout, stderr, text, env):
+        payload = next(responses)
+
+        def write_output(command) -> None:
+            output_path = Path(command[command.index("--output-last-message") + 1])
+            output_path.write_text(json.dumps(payload), encoding="utf-8")
+
+        return FakePopen(
+            cmd,
+            stdout_file=stdout,
+            stderr_file=stderr,
+            response={"write_output": write_output},
+            timeout_log=timeouts,
+        )
+
+    monkeypatch.setattr("docgarden.slices.runner.subprocess.Popen", fake_popen)
+
+    assert (
+        main(
+            [
+                "slices",
+                "run",
+                "--max-slices",
+                "1",
+                "--worker-timeout-seconds",
+                "15",
+                "--reviewer-timeout-seconds",
+                "4",
+            ]
+        )
+        == 0
+    )
+    _ = capsys.readouterr()
+    assert timeouts == [15, 4]
+
+
+def test_cli_slices_run_rejects_mixed_timeout_flags(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    repo = make_slice_repo(tmp_path)
+    monkeypatch.chdir(repo)
+
+    assert (
+        main(
+            [
+                "slices",
+                "run",
+                "--agent-timeout-seconds",
+                "12",
+                "--worker-timeout-seconds",
+                "20",
+            ]
+        )
+        == 1
+    )
+    captured = capsys.readouterr()
+    assert "Use either `--agent-timeout-seconds` or the per-role timeout flags" in captured.err

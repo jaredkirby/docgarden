@@ -24,7 +24,9 @@ docgarden slices next
 docgarden slices kickoff-prompt
 docgarden slices review-prompt --worker-output .docgarden/slice-loops/.../worker-round-1.output.json
 docgarden slices run --max-slices 1
-docgarden slices run --max-slices 1 --agent-timeout-seconds 300
+docgarden slices run --max-slices 1 --worker-timeout-seconds 900
+docgarden slices run --max-slices 1 --reviewer-timeout-seconds 300
+docgarden slices run --max-slices 1 --agent-timeout-seconds 600
 docgarden show FINDING_ID
 docgarden quality write
 docgarden fix safe --apply
@@ -104,24 +106,44 @@ Each run writes prompts, schemas, agent outputs, and stdout/stderr logs under
 `.docgarden/slice-loops/` so the loop stays inspectable and restartable by
 humans.
 
+As soon as a slice starts, the CLI prints its artifact directory to stderr.
+That makes it easier to inspect a long-running worker in real time instead of
+waiting for the final JSON summary.
+
 Use `docgarden slices run --max-slices 0` to keep advancing until no queued
 slices remain. The safer default is `--max-slices 1`, which automates one slice
 at a time.
 
-Each worker or reviewer `codex exec` call now has a 300-second timeout by
-default. Use `--agent-timeout-seconds 0` to disable that guardrail. When a
-Codex run times out or exits nonzero, `docgarden` still writes whatever
-stdout/stderr it captured to the current `.docgarden/slice-loops/...` run
-directory before failing, so operators have something concrete to inspect.
+Worker and reviewer runs now use separate default timeouts: 900 seconds for the
+implementation worker and 300 seconds for the reviewer. Use
+`--worker-timeout-seconds`, `--reviewer-timeout-seconds`, or the legacy
+`--agent-timeout-seconds` override to tune them. Use `0` on any of those flags
+to disable that timeout.
+
+When a Codex run times out or exits nonzero, `docgarden` keeps the run
+inspectable:
+
+1. it writes live stdout/stderr streams directly into the current
+   `.docgarden/slice-loops/...` run directory
+2. it persists `run-status.json` with the current phase, timeout settings, and
+   any terminal error
+3. it leaves any repo changes the worker already made in place for manual
+   verification or review
+
 Nested runs also strip parent `CODEX_*` session-control environment variables,
 start as ephemeral one-shot sessions, disable repo-unrelated MCP servers by
 default, and explicitly enable network access inside the child workspace-write
 sandbox so the worker or reviewer can reach the Codex API without inheriting
 the parent session’s tool startup or sandbox state.
 
+If a worker times out, do not assume the slice is a total loss. Check the
+printed run directory, inspect `run-status.json`, run `git status`, and then
+verify any partial work with `uv run pytest` and `uv run docgarden scan` before
+you decide whether to retry or recover manually.
+
 For other repos, the `slices` CLI also accepts path overrides such as
-`--catalog-path`, `--spec-path`, `--plan-path`, `--artifacts-dir`, and
-`--agent-timeout-seconds`.
+`--catalog-path`, `--spec-path`, `--plan-path`, `--artifacts-dir`,
+`--worker-timeout-seconds`, and `--reviewer-timeout-seconds`.
 
 There is also a repo-owned operator skill at
 `.agents/skills/docgarden-slice-orchestrator/SKILL.md` for agents that need to
@@ -149,5 +171,4 @@ The repo currently includes:
 - a Codex worker/reviewer loop that can continue until a slice is accepted or
   blocked
 
-Next planned slice: routing quality detection for stale or low-signal targets
-from AGENTS/index routes.
+Next planned slice: score trend and weighted domain rollups.

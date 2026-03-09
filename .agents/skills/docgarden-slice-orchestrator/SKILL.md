@@ -44,11 +44,13 @@ docgarden slices run --catalog-path <slice-backlog.md> --spec-path <spec.md> --p
 2. Prefer the built-in loop for normal operation.
    Run:
    ```bash
-   uv run docgarden slices run --max-slices 1
+   uv run docgarden slices run --max-slices 1 --worker-timeout-seconds 900
    ```
    This should be the default path when the user wants the next slice advanced.
    In another repo, add `--catalog-path`, `--spec-path`, and `--plan-path` if
    the defaults do not match that project’s docs layout.
+   Reviewer runs are usually shorter, so keep the default reviewer timeout
+   unless you have evidence that review itself is the slow step.
 
 3. Inspect the loop result.
    The command returns structured JSON and writes artifacts under
@@ -56,7 +58,10 @@ docgarden slices run --catalog-path <slice-backlog.md> --spec-path <spec.md> --p
    Read:
    - worker output JSON
    - review output JSON
+   - `run-status.json` for the current phase, timeout settings, and latest error
    - stdout/stderr logs if something failed
+   The CLI now prints the artifact directory to stderr as soon as each slice
+   starts, so you can inspect the live run before the final JSON summary lands.
 
 4. Decide what to do from the reviewer recommendation.
    - `ready_for_next_slice`: report success and, if asked, run the next slice.
@@ -117,6 +122,12 @@ uv run docgarden slices review-prompt \
   next slice.
 - If `codex exec` fails, inspect `.docgarden/slice-loops/.../*.stderr.txt`
   before retrying.
+- Long worker rounds may spend several minutes implementing code with little or
+  no terminal output. That is not, by itself, a failure signal.
+- If a worker times out, inspect the run directory, `git status`, `uv run
+  pytest`, and `uv run docgarden scan` before assuming the slice failed
+  completely; the child agent may have produced reviewable work before missing
+  the structured-output deadline.
 - If docs or prompts drift behind the implementation state, update the durable
   docs after the slice is accepted.
 
@@ -126,11 +137,27 @@ uv run docgarden slices review-prompt \
 uv run docgarden slices next
 uv run docgarden slices kickoff-prompt
 uv run docgarden slices review-prompt --worker-output .docgarden/slice-loops/.../worker-round-1.output.json
-uv run docgarden slices run --max-slices 1
+uv run docgarden slices run --max-slices 1 --worker-timeout-seconds 900
 uv run docgarden slices run --catalog-path path/to/slices.md --spec-path path/to/spec.md --plan-path path/to/exec-plan.md
 uv run pytest
 uv run docgarden scan
 ```
+
+## Timeout triage
+
+When `docgarden slices run` times out:
+
+1. Read the printed artifact directory path and inspect `run-status.json`.
+2. Check whether the worker wrote partial progress to the repo with `git status`.
+3. Read `.stdout.txt` / `.stderr.txt` to distinguish a slow implementation from
+   an actual launch failure.
+4. If repo changes exist, run:
+   ```bash
+   uv run pytest
+   uv run docgarden scan
+   ```
+5. Only after that decide whether to retry, review the partial work manually,
+   or escalate a real blocker.
 
 ## When to pause and escalate
 

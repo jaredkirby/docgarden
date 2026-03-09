@@ -6,6 +6,7 @@ import json
 import os
 import subprocess
 from pathlib import Path
+import sys
 from typing import Any
 
 from ..errors import DocgardenError
@@ -37,6 +38,9 @@ DEFAULT_CODEX_EXEC_ARGS = (
     "sandbox_workspace_write.network_access=true",
 )
 
+DEFAULT_WORKER_TIMEOUT_SECONDS = 900
+DEFAULT_REVIEWER_TIMEOUT_SECONDS = 300
+
 
 @dataclass(slots=True)
 class AgentRunArtifact:
@@ -67,7 +71,8 @@ def run_slice_loop(
     start_slice: str | None = None,
     max_slices: int = 1,
     max_review_rounds: int = 3,
-    agent_timeout_seconds: int | None = 300,
+    worker_timeout_seconds: int | None = DEFAULT_WORKER_TIMEOUT_SECONDS,
+    reviewer_timeout_seconds: int | None = DEFAULT_REVIEWER_TIMEOUT_SECONDS,
     codex_bin: str = "codex",
     model: str | None = None,
     codex_args: list[str] | None = None,
@@ -102,7 +107,8 @@ def run_slice_loop(
             slice_def=current,
             next_slice=next_slice,
             max_review_rounds=max_review_rounds,
-            agent_timeout_seconds=agent_timeout_seconds,
+            worker_timeout_seconds=worker_timeout_seconds,
+            reviewer_timeout_seconds=reviewer_timeout_seconds,
             codex_bin=codex_bin,
             model=model,
             codex_args=codex_args or [],
@@ -133,7 +139,8 @@ def _run_single_slice(
     slice_def: SliceDefinition,
     next_slice: SliceDefinition | None,
     max_review_rounds: int,
-    agent_timeout_seconds: int | None,
+    worker_timeout_seconds: int | None,
+    reviewer_timeout_seconds: int | None,
     codex_bin: str,
     model: str | None,
     codex_args: list[str],
@@ -141,11 +148,26 @@ def _run_single_slice(
     timestamp = datetime.now().strftime("%Y-%m-%dT%H%M%S")
     run_dir = loop_root / f"{timestamp}-{slice_def.slice_id.lower()}"
     run_dir.mkdir(parents=True, exist_ok=True)
+    print(
+        f"[docgarden] slice {slice_def.slice_id}: artifacts -> {run_dir}",
+        file=sys.stderr,
+    )
 
     worker_outputs: list[str] = []
     review_outputs: list[str] = []
     prior_review_path: Path | None = None
     previous_worker_output_path: Path | None = None
+    status_payload = {
+        "slice_id": slice_def.slice_id,
+        "title": slice_def.title,
+        "artifacts_dir": str(run_dir),
+        "max_review_rounds": max_review_rounds,
+        "worker_timeout_seconds": worker_timeout_seconds,
+        "reviewer_timeout_seconds": reviewer_timeout_seconds,
+        "worker_outputs": worker_outputs,
+        "review_outputs": review_outputs,
+    }
+    _write_run_status(run_dir, **status_payload, status="running")
 
     for round_number in range(1, max_review_rounds + 1):
         worker_prompt = build_implementation_prompt(
@@ -157,20 +179,49 @@ def _run_single_slice(
             review_feedback_path=prior_review_path,
             previous_worker_output_path=previous_worker_output_path,
         )
-        worker_run = _run_codex_agent(
-            repo_root,
-            run_dir=run_dir,
-            codex_bin=codex_bin,
-            codex_args=codex_args,
-            model=model,
-            prompt=worker_prompt,
-            schema=WORKER_OUTPUT_SCHEMA,
-            prefix=f"worker-round-{round_number}",
-            timeout_seconds=agent_timeout_seconds,
+        worker_prefix = f"worker-round-{round_number}"
+        _write_run_status(
+            run_dir,
+            **status_payload,
+            current_phase="worker",
+            current_round=round_number,
+            current_prefix=worker_prefix,
         )
+        try:
+            worker_run = _run_codex_agent(
+                repo_root,
+                run_dir=run_dir,
+                codex_bin=codex_bin,
+                codex_args=codex_args,
+                model=model,
+                prompt=worker_prompt,
+                schema=WORKER_OUTPUT_SCHEMA,
+                prefix=worker_prefix,
+                timeout_seconds=worker_timeout_seconds,
+            )
+        except DocgardenError as exc:
+            _write_run_status(
+                run_dir,
+                **status_payload,
+                status="failed",
+                current_phase="worker",
+                current_round=round_number,
+                current_prefix=worker_prefix,
+                error=str(exc),
+            )
+            raise
         worker_outputs.append(str(worker_run.output_path))
         previous_worker_output_path = worker_run.output_path
         if worker_run.parsed_output["status"] == "blocked":
+            _write_run_status(
+                run_dir,
+                **status_payload,
+                status="blocked_pending_product_clarification",
+                current_phase="worker",
+                current_round=round_number,
+                current_prefix=worker_prefix,
+                last_worker_output=str(worker_run.output_path),
+            )
             return SliceRunResult(
                 slice_id=slice_def.slice_id,
                 title=slice_def.title,
@@ -190,17 +241,39 @@ def _run_single_slice(
             round_number=round_number,
             prior_review_path=prior_review_path,
         )
-        review_run = _run_codex_agent(
-            repo_root,
-            run_dir=run_dir,
-            codex_bin=codex_bin,
-            codex_args=codex_args,
-            model=model,
-            prompt=review_prompt,
-            schema=REVIEW_OUTPUT_SCHEMA,
-            prefix=f"review-round-{round_number}",
-            timeout_seconds=agent_timeout_seconds,
+        review_prefix = f"review-round-{round_number}"
+        _write_run_status(
+            run_dir,
+            **status_payload,
+            current_phase="review",
+            current_round=round_number,
+            current_prefix=review_prefix,
+            last_worker_output=str(worker_run.output_path),
         )
+        try:
+            review_run = _run_codex_agent(
+                repo_root,
+                run_dir=run_dir,
+                codex_bin=codex_bin,
+                codex_args=codex_args,
+                model=model,
+                prompt=review_prompt,
+                schema=REVIEW_OUTPUT_SCHEMA,
+                prefix=review_prefix,
+                timeout_seconds=reviewer_timeout_seconds,
+            )
+        except DocgardenError as exc:
+            _write_run_status(
+                run_dir,
+                **status_payload,
+                status="failed",
+                current_phase="review",
+                current_round=round_number,
+                current_prefix=review_prefix,
+                last_worker_output=str(worker_run.output_path),
+                error=str(exc),
+            )
+            raise
         review_outputs.append(str(review_run.output_path))
         prior_review_path = review_run.output_path
         recommendation = str(review_run.parsed_output["recommendation"])
@@ -208,6 +281,17 @@ def _run_single_slice(
             "ready_for_next_slice",
             "blocked_pending_product_clarification",
         }:
+            _write_run_status(
+                run_dir,
+                **status_payload,
+                status=recommendation,
+                current_phase="review",
+                current_round=round_number,
+                current_prefix=review_prefix,
+                last_worker_output=str(worker_run.output_path),
+                last_review_output=str(review_run.output_path),
+                recommendation=recommendation,
+            )
             return SliceRunResult(
                 slice_id=slice_def.slice_id,
                 title=slice_def.title,
@@ -218,6 +302,15 @@ def _run_single_slice(
                 review_outputs=review_outputs,
             )
 
+    _write_run_status(
+        run_dir,
+        **status_payload,
+        status="failed",
+        current_phase="review",
+        current_round=max_review_rounds,
+        current_prefix=f"review-round-{max_review_rounds}",
+        error=f"Exceeded max review rounds ({max_review_rounds}) for {slice_def.slice_id}.",
+    )
     raise DocgardenError(
         f"Exceeded max review rounds ({max_review_rounds}) for {slice_def.slice_id}."
     )
@@ -261,39 +354,40 @@ def _run_codex_agent(
     command.extend(codex_args)
     command.append("-")
 
+    atomic_write_text(stdout_path, "")
+    atomic_write_text(stderr_path, "")
+
     try:
-        completed = subprocess.run(
-            command,
-            cwd=repo_root,
-            input=prompt,
-            text=True,
-            capture_output=True,
-            check=False,
-            timeout=timeout_seconds,
-            env=_build_codex_subprocess_env(),
-        )
+        with stdout_path.open("w", encoding="utf-8") as stdout_file, stderr_path.open(
+            "w", encoding="utf-8"
+        ) as stderr_file:
+            process = subprocess.Popen(
+                command,
+                cwd=repo_root,
+                stdin=subprocess.PIPE,
+                stdout=stdout_file,
+                stderr=stderr_file,
+                text=True,
+                env=_build_codex_subprocess_env(),
+            )
+            try:
+                process.communicate(input=prompt, timeout=timeout_seconds)
+            except subprocess.TimeoutExpired as exc:
+                process.kill()
+                process.communicate()
+                timeout_display = "the configured timeout"
+                if timeout_seconds is not None:
+                    timeout_display = f"{timeout_seconds} seconds"
+                raise DocgardenError(
+                    f"Codex agent run timed out for {prefix} after {timeout_display}. "
+                    f"Partial logs were written to {stdout_path} and {stderr_path}."
+                ) from exc
     except FileNotFoundError as exc:
         raise DocgardenError(f"Could not find Codex CLI binary: {codex_bin}.") from exc
-    except subprocess.TimeoutExpired as exc:
-        _write_process_logs(stdout_path, stderr_path, stdout=exc.stdout, stderr=exc.stderr)
-        timeout_display = "the configured timeout"
-        if timeout_seconds is not None:
-            timeout_display = f"{timeout_seconds} seconds"
-        raise DocgardenError(
-            f"Codex agent run timed out for {prefix} after {timeout_display}. "
-            f"Partial logs were written to {stdout_path} and {stderr_path}."
-        ) from exc
 
-    _write_process_logs(
-        stdout_path,
-        stderr_path,
-        stdout=completed.stdout,
-        stderr=completed.stderr,
-    )
-
-    if completed.returncode != 0:
+    if process.returncode != 0:
         raise DocgardenError(
-            f"Codex agent run failed for {prefix} with exit code {completed.returncode}. "
+            f"Codex agent run failed for {prefix} with exit code {process.returncode}. "
             f"See {stderr_path}."
         )
     if not output_path.exists():
@@ -323,23 +417,12 @@ def _run_codex_agent(
     )
 
 
-def _write_process_logs(
-    stdout_path: Path,
-    stderr_path: Path,
-    *,
-    stdout: str | bytes | None,
-    stderr: str | bytes | None,
-) -> None:
-    atomic_write_text(stdout_path, _coerce_process_stream(stdout))
-    atomic_write_text(stderr_path, _coerce_process_stream(stderr))
-
-
-def _coerce_process_stream(value: str | bytes | None) -> str:
-    if value is None:
-        return ""
-    if isinstance(value, bytes):
-        return value.decode("utf-8", errors="replace")
-    return value
+def _write_run_status(run_dir: Path, **payload: Any) -> None:
+    enriched = {"updated_at": datetime.now().isoformat(), **payload}
+    atomic_write_text(
+        run_dir / "run-status.json",
+        json.dumps(enriched, indent=2, sort_keys=True) + "\n",
+    )
 
 
 def _build_codex_subprocess_env() -> dict[str, str]:

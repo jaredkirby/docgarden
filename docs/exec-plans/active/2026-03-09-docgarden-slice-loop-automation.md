@@ -75,6 +75,10 @@ inside `docgarden`.
 - 2026-03-09: Reproduced the next live failure mode from the operator skill: nested `codex exec` runs inherited global MCP startup and a network-disabled child sandbox, which combined into macOS `system-configuration` proxy panics and API DNS failures before the worker could return structured JSON.
 - 2026-03-09: Updated nested worker/reviewer launches to run as ephemeral sessions, disable the repo-unrelated default MCP servers, and enable child workspace-write network access so `docgarden slices run` can reach the Codex API without tripping the local MCP/proxy startup path.
 - 2026-03-09: Tightened worker/reviewer prompts to say explicitly that slice implementation and review should happen directly rather than recursively using the `docgarden-slice-orchestrator` operator skill.
+- 2026-03-09: Split the old shared agent timeout into role-specific defaults: 900 seconds for workers and 300 seconds for reviewers, while keeping a compatibility `--agent-timeout-seconds` override for older operator habits.
+- 2026-03-09: Switched nested `codex exec` launches from buffered `subprocess.run(...)` capture to streamed `Popen(...)` log files so operators can inspect live stdout/stderr in `.docgarden/slice-loops/...` while a worker is still running.
+- 2026-03-09: Added `run-status.json` artifacts and immediate stderr announcements of the slice run directory so timeout triage has a canonical place to look for the current phase, timeout settings, and latest error.
+- 2026-03-09: Added timeout-focused regression coverage for role-specific budgets, mixed timeout flag validation, and the real-world case where a timed-out worker leaves useful repo changes behind for manual salvage.
 
 ## Discoveries
 
@@ -89,6 +93,9 @@ inside `docgarden`.
 - The next live smoke test showed a second integration seam that mocks missed: even a healthy nested `codex exec` can fail before the model call if it boots the operator’s configured MCP servers, because those startup HTTP clients may still hit macOS proxy discovery.
 - Nested worker/reviewer runs also need explicit child-sandbox network access; otherwise they can start cleanly and still fail every API websocket connection with DNS lookup errors while the outer session appears healthy.
 - Prompt wording matters for repos that publish operator skills: if the worker prompt sounds like “run the slice loop” instead of “implement the code,” the child agent can recursively choose the orchestration skill and spend time on the wrong job.
+- A single timeout budget does not fit both roles well: implementation workers can need 10-15 minutes for a clean slice, while reviewers are usually quick and benefit from a much shorter failure bound.
+- Buffered subprocess capture is the wrong UX for long-running agent work because it hides the difference between “healthy but busy” and “stuck before first token”; writing logs live to disk makes the artifact directory genuinely useful during a run.
+- Timeout recovery is an operator workflow, not just an error string. The tool and docs need to make it obvious that a timed-out worker may still have produced reviewable repo changes.
 
 ## Decision Log
 
@@ -101,6 +108,8 @@ inside `docgarden`.
 - 2026-03-09: Persist partial stdout/stderr before raising timeout or nonzero-exit errors, so the artifact directory remains inspectable even when the agent process never produces structured JSON.
 - 2026-03-09: Strip inherited `CODEX_CI`, `CODEX_SANDBOX`, `CODEX_SANDBOX_NETWORK_DISABLED`, and `CODEX_THREAD_ID` from nested worker/reviewer launches, because those describe the parent Codex session rather than the child run we want `docgarden` to start.
 - 2026-03-09: Launch nested worker/reviewer agents with `--ephemeral`, disable the configured `pencil` and `openaiDeveloperDocs` MCP servers by default, and override `sandbox_workspace_write.network_access=true` so the child Codex process starts with only the capabilities this slice loop actually needs.
+- 2026-03-09: Keep the legacy `--agent-timeout-seconds` flag for compatibility, but prefer explicit `--worker-timeout-seconds` and `--reviewer-timeout-seconds` so operators can give implementation work more room without weakening review feedback loops.
+- 2026-03-09: Treat timeout observability as a first-class artifact concern by printing the run directory immediately, streaming logs to disk, and persisting `run-status.json` alongside prompts and structured outputs.
 
 ## Outcomes / Retrospective
 

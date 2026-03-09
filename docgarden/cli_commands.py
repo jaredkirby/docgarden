@@ -15,6 +15,8 @@ from .models import RepoPaths
 from .quality import write_quality_score
 from .scan_workflow import run_changed_scan, run_scan
 from .slices import (
+    DEFAULT_REVIEWER_TIMEOUT_SECONDS,
+    DEFAULT_WORKER_TIMEOUT_SECONDS,
     build_implementation_prompt,
     build_review_prompt,
     build_slice_paths,
@@ -352,10 +354,35 @@ def command_slices_run(args: argparse.Namespace) -> int:
         raise DocgardenError(
             "`docgarden slices run --max-review-rounds` must be at least 1."
         )
-    if args.agent_timeout_seconds < 0:
+    if (
+        args.agent_timeout_seconds is not None
+        and (args.worker_timeout_seconds is not None or args.reviewer_timeout_seconds is not None)
+    ):
+        raise DocgardenError(
+            "Use either `--agent-timeout-seconds` or the per-role timeout flags, not both."
+        )
+    if args.agent_timeout_seconds is not None and args.agent_timeout_seconds < 0:
         raise DocgardenError(
             "`docgarden slices run --agent-timeout-seconds` must be 0 or greater."
         )
+    if args.worker_timeout_seconds is not None and args.worker_timeout_seconds < 0:
+        raise DocgardenError(
+            "`docgarden slices run --worker-timeout-seconds` must be 0 or greater."
+        )
+    if args.reviewer_timeout_seconds is not None and args.reviewer_timeout_seconds < 0:
+        raise DocgardenError(
+            "`docgarden slices run --reviewer-timeout-seconds` must be 0 or greater."
+        )
+
+    worker_timeout_seconds = DEFAULT_WORKER_TIMEOUT_SECONDS
+    reviewer_timeout_seconds = DEFAULT_REVIEWER_TIMEOUT_SECONDS
+    if args.agent_timeout_seconds is not None:
+        worker_timeout_seconds = args.agent_timeout_seconds
+        reviewer_timeout_seconds = args.agent_timeout_seconds
+    if args.worker_timeout_seconds is not None:
+        worker_timeout_seconds = args.worker_timeout_seconds
+    if args.reviewer_timeout_seconds is not None:
+        reviewer_timeout_seconds = args.reviewer_timeout_seconds
 
     slice_paths = _slice_paths_from_args(Path.cwd(), args)
     summary = run_slice_loop(
@@ -364,8 +391,11 @@ def command_slices_run(args: argparse.Namespace) -> int:
         start_slice=args.from_slice,
         max_slices=args.max_slices,
         max_review_rounds=args.max_review_rounds,
-        agent_timeout_seconds=(
-            None if args.agent_timeout_seconds == 0 else args.agent_timeout_seconds
+        worker_timeout_seconds=(
+            None if worker_timeout_seconds == 0 else worker_timeout_seconds
+        ),
+        reviewer_timeout_seconds=(
+            None if reviewer_timeout_seconds == 0 else reviewer_timeout_seconds
         ),
         codex_bin=args.codex_bin,
         model=args.model,

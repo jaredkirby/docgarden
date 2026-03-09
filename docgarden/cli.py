@@ -239,10 +239,28 @@ def build_parser() -> argparse.ArgumentParser:
     slices_run.add_argument(
         "--agent-timeout-seconds",
         type=int,
-        default=300,
+        default=None,
         help=(
-            "Maximum runtime for each worker or reviewer Codex run. "
-            "Use 0 to disable the timeout."
+            "Legacy override applied to both worker and reviewer Codex runs. "
+            "Use 0 to disable both timeouts."
+        ),
+    )
+    slices_run.add_argument(
+        "--worker-timeout-seconds",
+        type=int,
+        default=None,
+        help=(
+            "Maximum runtime for each worker Codex run. "
+            "Defaults to 900 seconds. Use 0 to disable the timeout."
+        ),
+    )
+    slices_run.add_argument(
+        "--reviewer-timeout-seconds",
+        type=int,
+        default=None,
+        help=(
+            "Maximum runtime for each reviewer Codex run. "
+            "Defaults to 300 seconds. Use 0 to disable the timeout."
         ),
     )
     slices_run.add_argument(
