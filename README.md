@@ -151,6 +151,9 @@ you decide whether to retry or recover manually.
 `untracked_paths` fields report only changes that appeared after the run
 started, while `preexisting_*` and `current_*` fields show the full picture for
 operators working in already-dirty repos.
+Expected untracked slice-loop artifact paths are broken out separately as
+`run_artifact_untracked_paths` so retry guidance stays focused on operator
+changes rather than the run directory itself.
 
 `run-status.json` now updates during long worker/reviewer runs. The most useful
 live fields are:

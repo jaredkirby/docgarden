@@ -175,7 +175,9 @@ If you need operator controls instead of manual shell work:
   and mark the run `stopped`
 - `uv run docgarden slices recover --run-dir <run-dir>` to summarize repo
   changes, compare them against the repo baseline captured at run start, and
-  rerun verification without rediscovering the recovery workflow
+  rerun verification without rediscovering the recovery workflow. Treat
+  `run_artifact_untracked_paths` as expected loop-output noise unless it points
+  somewhere surprising outside the slice artifact root.
 - `uv run docgarden slices retry --run-dir <run-dir>` to launch a fresh retry
   run for the same slice, reusing prior worker/reviewer outputs when they exist
   so the resumed worker starts with the right revision context

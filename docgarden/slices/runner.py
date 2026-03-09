@@ -886,6 +886,11 @@ def recover_slice_run(
     current_untracked = _git_untracked_paths(repo_root)
     new_tracked = _diff_repo_paths(current_tracked, baseline_tracked)
     new_untracked = _diff_repo_paths(current_untracked, baseline_untracked)
+    operator_untracked, run_artifact_untracked = _partition_run_artifact_untracked_paths(
+        new_untracked,
+        repo_root=repo_root,
+        run_dir=run_dir,
+    )
     recovery: dict[str, Any] = {
         "run_dir": str(run_dir),
         "status": status,
@@ -895,9 +900,10 @@ def recover_slice_run(
         "current_tracked_changes": current_tracked,
         "current_untracked_paths": current_untracked,
         "tracked_changes": new_tracked,
-        "untracked_paths": new_untracked,
+        "untracked_paths": operator_untracked,
         "new_tracked_changes": new_tracked,
-        "new_untracked_paths": new_untracked,
+        "new_untracked_paths": operator_untracked,
+        "run_artifact_untracked_paths": run_artifact_untracked,
         "preexisting_tracked_changes": _overlap_repo_paths(current_tracked, baseline_tracked),
         "preexisting_untracked_paths": _overlap_repo_paths(current_untracked, baseline_untracked),
         "worker_outputs": summary["worker_outputs"],
@@ -977,9 +983,47 @@ def _diff_repo_paths(current: list[str], baseline: list[str]) -> list[str]:
     return sorted(path for path in current if path not in baseline_set)
 
 
+def _partition_run_artifact_untracked_paths(
+    paths: list[str],
+    *,
+    repo_root: Path,
+    run_dir: Path,
+) -> tuple[list[str], list[str]]:
+    run_relative = _repo_relative_path(repo_root, run_dir)
+    if run_relative is None:
+        return sorted(paths), []
+    operator_paths: list[str] = []
+    artifact_paths: list[str] = []
+    for raw_path in paths:
+        candidate = Path(raw_path.rstrip("/"))
+        if _paths_overlap(candidate, run_relative):
+            artifact_paths.append(raw_path)
+        else:
+            operator_paths.append(raw_path)
+    return sorted(operator_paths), sorted(artifact_paths)
+
+
 def _overlap_repo_paths(current: list[str], baseline: list[str]) -> list[str]:
     baseline_set = set(baseline)
     return sorted(path for path in current if path in baseline_set)
+
+
+def _repo_relative_path(repo_root: Path, path: Path) -> Path | None:
+    try:
+        return path.relative_to(repo_root)
+    except ValueError:
+        return None
+
+
+def _paths_overlap(candidate: Path, target: Path) -> bool:
+    return _path_starts_with(candidate, target) or _path_starts_with(target, candidate)
+
+
+def _path_starts_with(path: Path, prefix: Path) -> bool:
+    prefix_parts = prefix.parts
+    if len(prefix_parts) > len(path.parts):
+        return False
+    return path.parts[: len(prefix_parts)] == prefix_parts
 
 
 def _recovery_recommendation(payload: dict[str, Any]) -> str:

@@ -830,8 +830,10 @@ def test_cli_slices_recover_runs_verification_and_reports_partial_changes(
     payload = json.loads(capsys.readouterr().out)
     assert payload["recovery_recommendation"] == "partial_repo_changes_need_review"
     assert payload["tracked_changes"] == ["docgarden/state.py"]
+    assert payload["untracked_paths"] == []
     assert payload["current_tracked_changes"] == ["docgarden/state.py"]
     assert payload["new_tracked_changes"] == ["docgarden/state.py"]
+    assert payload["run_artifact_untracked_paths"] == [".docgarden/slice-loops/"]
     assert payload["verification"]["pytest"]["returncode"] == 0
     assert payload["verification"]["scan"]["returncode"] == 0
 
@@ -873,6 +875,7 @@ def test_cli_slices_recover_subtracts_preexisting_repo_state(
     assert payload["untracked_paths"] == ["scratch.txt"]
     assert payload["new_tracked_changes"] == ["docgarden/state.py"]
     assert payload["new_untracked_paths"] == ["scratch.txt"]
+    assert payload["run_artifact_untracked_paths"] == []
     assert payload["preexisting_tracked_changes"] == ["README.md"]
     assert payload["preexisting_untracked_paths"] == [".docgarden/slice-loops/"]
     assert payload["recovery_recommendation"] == "partial_repo_changes_need_review"
@@ -909,8 +912,53 @@ def test_cli_slices_recover_ignores_only_preexisting_repo_state_for_retry(
     payload = json.loads(capsys.readouterr().out)
     assert payload["tracked_changes"] == []
     assert payload["untracked_paths"] == []
+    assert payload["new_untracked_paths"] == []
+    assert payload["run_artifact_untracked_paths"] == []
     assert payload["preexisting_tracked_changes"] == ["README.md"]
     assert payload["preexisting_untracked_paths"] == [".docgarden/slice-loops/"]
+    assert payload["recovery_recommendation"] == "safe_to_retry"
+
+
+def test_cli_slices_recover_separates_run_artifact_untracked_paths(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    repo = make_slice_repo(tmp_path)
+    run_dir = repo / ".docgarden" / "slice-loops" / "2026-03-09T101505-s10"
+    write_json(
+        run_dir / "run-status.json",
+        {
+            "slice_id": "S10",
+            "status": "failed",
+            "current_phase": "worker",
+            "baseline_recorded_at": "2026-03-09T10:15:04",
+            "baseline_tracked_changes": [],
+            "baseline_untracked_paths": [],
+            "error": "worker timed out",
+        },
+    )
+    monkeypatch.chdir(repo)
+    monkeypatch.setattr(
+        "docgarden.slices.runner._git_diff_name_only",
+        lambda repo_root: [],
+    )
+    monkeypatch.setattr(
+        "docgarden.slices.runner._git_untracked_paths",
+        lambda repo_root: [
+            ".docgarden/slice-loops/",
+            ".docgarden/slice-loops/2026-03-09T101505-s10/",
+            "scratch.txt",
+        ],
+    )
+
+    assert main(["slices", "recover", "--skip-verification"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["tracked_changes"] == []
+    assert payload["untracked_paths"] == ["scratch.txt"]
+    assert payload["new_untracked_paths"] == ["scratch.txt"]
+    assert payload["run_artifact_untracked_paths"] == [
+        ".docgarden/slice-loops/",
+        ".docgarden/slice-loops/2026-03-09T101505-s10/",
+    ]
     assert payload["recovery_recommendation"] == "safe_to_retry"
 
 

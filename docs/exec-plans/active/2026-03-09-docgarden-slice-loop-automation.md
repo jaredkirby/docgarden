@@ -84,6 +84,7 @@ inside `docgarden`.
 - 2026-03-09: Added `docgarden slices retry` so a failed or stopped run can spawn a fresh retry for the same slice while reusing prior worker/reviewer artifact paths to resume from the correct round when context already exists.
 - 2026-03-09: Added `docgarden slices list` and dry-run-first `docgarden slices prune` so operators can manage accumulated slice-loop artifact directories without ad-hoc shell cleanup.
 - 2026-03-09: Added baseline repo-state snapshots to `run-status.json` and taught `docgarden slices recover` to report post-baseline deltas separately from pre-existing dirty worktree state.
+- 2026-03-09: Taught `docgarden slices recover` to separate expected untracked artifact-root paths into `run_artifact_untracked_paths` instead of mixing them into operator-facing `new_untracked_paths`.
 
 ## Discoveries
 
@@ -106,6 +107,7 @@ inside `docgarden`.
 - Retry ergonomics matter too: after a failed or interrupted run, operators should not have to manually reconstruct revision context from scattered artifact files just to restart the next worker pass.
 - Artifact retention matters once the loop becomes useful; without list/prune helpers, the safer control-plane design just pushes operators back into manual filesystem cleanup.
 - Recovery recommendations get much more trustworthy when the runner remembers what the repo looked like at launch; otherwise `recover` cannot distinguish “the slice changed this” from “the operator was already mid-edit.”
+- Even after baseline diffing, the run’s own artifact directory is expected untracked output, so recovery JSON should label it explicitly instead of presenting it as suspicious repo drift.
 
 ## Decision Log
 
@@ -125,6 +127,7 @@ inside `docgarden`.
 - 2026-03-09: Use prior run artifacts as resume context, not as mutable state. `retry` creates a new run directory while threading the earlier worker/reviewer JSON paths into the next worker or reviewer step as appropriate.
 - 2026-03-09: Make artifact cleanup dry-run first. `prune` only deletes when `--apply` is passed and otherwise reports which finished runs would be removed after preserving the newest `--keep` entries.
 - 2026-03-09: Treat recovery as a diff against a recorded baseline, not just a snapshot of the current worktree, so dirty repos can still get actionable retry-vs-review guidance.
+- 2026-03-09: Keep expected slice-loop artifact dirt visible but quarantined in a dedicated recovery field so operators still see it without having to mentally subtract it from actionable repo changes.
 
 ## Outcomes / Retrospective
 
