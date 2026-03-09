@@ -172,6 +172,9 @@ If you need operator controls instead of manual shell work:
   and mark the run `stopped`
 - `uv run docgarden slices recover --run-dir <run-dir>` to summarize repo
   changes and rerun verification without rediscovering the recovery workflow
+- `uv run docgarden slices retry --run-dir <run-dir>` to launch a fresh retry
+  run for the same slice, reusing prior worker/reviewer outputs when they exist
+  so the resumed worker starts with the right revision context
 
 ## When to pause and escalate
 

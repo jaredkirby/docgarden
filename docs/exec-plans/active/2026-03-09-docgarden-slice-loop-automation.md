@@ -81,6 +81,7 @@ inside `docgarden`.
 - 2026-03-09: Added timeout-focused regression coverage for role-specific budgets, mixed timeout flag validation, and the real-world case where a timed-out worker leaves useful repo changes behind for manual salvage.
 - 2026-03-09: Added heartbeat-driven `run-status.json` updates so long worker/reviewer passes now refresh `phase_started_at`, `last_heartbeat_at`, `elapsed_seconds`, and `agent_pid` while the nested `codex exec` process is still running.
 - 2026-03-09: Added operator-facing `docgarden slices watch`, `stop`, and `recover` commands so humans can inspect the latest run, stop an active pid-backed run cleanly, and rerun verification for timed-out or interrupted work without rebuilding the recovery flow manually.
+- 2026-03-09: Added `docgarden slices retry` so a failed or stopped run can spawn a fresh retry for the same slice while reusing prior worker/reviewer artifact paths to resume from the correct round when context already exists.
 
 ## Discoveries
 
@@ -100,6 +101,7 @@ inside `docgarden`.
 - Timeout recovery is an operator workflow, not just an error string. The tool and docs need to make it obvious that a timed-out worker may still have produced reviewable repo changes.
 - Operators also need positive liveness signals during healthy long runs, not just better failure logs after the fact; heartbeat and elapsed-time fields make the distinction between “slow” and “wedged” much easier.
 - Once a run is inspectable, operators also need first-class controls to act on it. Status visibility without `stop` and `recover` still leaves too much ad-hoc shell work when a run needs intervention.
+- Retry ergonomics matter too: after a failed or interrupted run, operators should not have to manually reconstruct revision context from scattered artifact files just to restart the next worker pass.
 
 ## Decision Log
 
@@ -116,6 +118,7 @@ inside `docgarden`.
 - 2026-03-09: Treat timeout observability as a first-class artifact concern by printing the run directory immediately, streaming logs to disk, and persisting `run-status.json` alongside prompts and structured outputs.
 - 2026-03-09: Keep `run-status.json` merge-based and heartbeat refreshed so later status transitions like `failed` or `ready_for_next_slice` do not discard the elapsed-time context operators used during the live run.
 - 2026-03-09: Treat run directories as the control plane for manual intervention too: the latest-run resolver, `watch`, `stop`, and `recover` all operate from the artifact directory instead of depending on parent-session state.
+- 2026-03-09: Use prior run artifacts as resume context, not as mutable state. `retry` creates a new run directory while threading the earlier worker/reviewer JSON paths into the next worker or reviewer step as appropriate.
 
 ## Outcomes / Retrospective
 

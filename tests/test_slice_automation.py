@@ -803,3 +803,100 @@ def test_cli_slices_recover_runs_verification_and_reports_partial_changes(
     assert payload["tracked_changes"] == ["docgarden/state.py"]
     assert payload["verification"]["pytest"]["returncode"] == 0
     assert payload["verification"]["scan"]["returncode"] == 0
+
+
+def test_cli_slices_retry_reuses_prior_review_context(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    repo = make_slice_repo(tmp_path)
+    prior_run_dir = repo / ".docgarden" / "slice-loops" / "2026-03-09T101503-s07"
+    prior_worker_output = prior_run_dir / "worker-round-1.output.json"
+    prior_review_output = prior_run_dir / "review-round-1.output.json"
+    write_json(prior_worker_output, {"status": "completed", "summary": "round 1"})
+    write_json(
+        prior_review_output,
+        {
+            "recommendation": "revise_before_next_slice",
+            "summary": "needs revision",
+            "findings": [],
+            "next_step": "Revise.",
+        },
+    )
+    write_json(
+        prior_run_dir / "run-status.json",
+        {
+            "slice_id": "S07",
+            "status": "failed",
+            "current_phase": "worker",
+            "current_round": 2,
+            "last_worker_output": str(prior_worker_output),
+            "last_review_output": str(prior_review_output),
+        },
+    )
+    monkeypatch.chdir(repo)
+    responses = iter(
+        [
+            {
+                "status": "completed",
+                "summary": "Implemented revision.",
+                "files_touched": ["docgarden/scan_alignment.py"],
+                "tests_run": ["uv run pytest"],
+                "docs_updated": [],
+                "notes_for_reviewer": ["Revision applied."],
+                "open_questions": [],
+            },
+            {
+                "recommendation": "ready_for_next_slice",
+                "summary": "S07 is ready.",
+                "findings": [],
+                "next_step": "Move on.",
+            },
+        ]
+    )
+    timeouts: list[int | None] = []
+
+    def fake_popen(cmd, cwd, stdin, stdout, stderr, text, env):
+        payload = next(responses)
+
+        def write_output(command) -> None:
+            output_path = Path(command[command.index("--output-last-message") + 1])
+            output_path.write_text(json.dumps(payload), encoding="utf-8")
+
+        return FakePopen(
+            cmd,
+            stdout_file=stdout,
+            stderr_file=stderr,
+            response={"write_output": write_output},
+            timeout_log=timeouts,
+        )
+
+    monkeypatch.setattr("docgarden.slices.runner.subprocess.Popen", fake_popen)
+
+    assert main(["slices", "retry", "--run-dir", str(prior_run_dir)]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["retried_from"] == str(prior_run_dir)
+    assert payload["results"][0]["recommendation"] == "ready_for_next_slice"
+    assert timeouts == [900, 300]
+    new_run_dir = Path(payload["results"][0]["run_dir"])
+    worker_prompt = (new_run_dir / "worker-round-2.prompt.txt").read_text(encoding="utf-8")
+    assert str(prior_worker_output) in worker_prompt
+    assert str(prior_review_output) in worker_prompt
+
+
+def test_cli_slices_retry_rejects_successful_run(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    repo = make_slice_repo(tmp_path)
+    prior_run_dir = repo / ".docgarden" / "slice-loops" / "2026-03-09T101504-s07"
+    write_json(
+        prior_run_dir / "run-status.json",
+        {
+            "slice_id": "S07",
+            "status": "ready_for_next_slice",
+        },
+    )
+    monkeypatch.chdir(repo)
+
+    assert main(["slices", "retry", "--run-dir", str(prior_run_dir)]) == 1
+    captured = capsys.readouterr()
+    assert "Cannot retry successful slice run" in captured.err

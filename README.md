@@ -26,6 +26,7 @@ docgarden slices review-prompt --worker-output .docgarden/slice-loops/.../worker
 docgarden slices watch --max-updates 1
 docgarden slices stop
 docgarden slices recover
+docgarden slices retry
 docgarden slices run --max-slices 1
 docgarden slices run --max-slices 1 --worker-timeout-seconds 900
 docgarden slices run --max-slices 1 --reviewer-timeout-seconds 300
@@ -166,6 +167,11 @@ The operator control commands build on those artifacts:
   Summarizes the run, reports current tracked/untracked repo changes, and by
   default reruns `uv run pytest` plus `uv run docgarden scan` so operators can
   judge whether a timed-out or interrupted run left reviewable work behind.
+- `docgarden slices retry`
+  Starts a fresh retry run for the same slice using the prior run directory as
+  context. If the earlier run already has worker/reviewer JSON artifacts, the
+  retry flow reuses them to resume from the right worker or reviewer round
+  instead of starting from scratch.
 
 For other repos, the `slices` CLI also accepts path overrides such as
 `--catalog-path`, `--spec-path`, `--plan-path`, `--artifacts-dir`,

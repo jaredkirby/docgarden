@@ -18,6 +18,7 @@ from .cli_commands import (
     command_show,
     command_slices_kickoff_prompt,
     command_slices_next,
+    command_slices_retry,
     command_slices_recover,
     command_slices_review_prompt,
     command_slices_run,
@@ -265,6 +266,63 @@ def build_parser() -> argparse.ArgumentParser:
         help="Skip `uv run pytest` and `uv run docgarden scan` during recovery.",
     )
     slices_recover.set_defaults(func=command_slices_recover)
+    slices_retry = slices_subparsers.add_parser(
+        "retry",
+        help="Retry a failed or stopped slice run from its existing artifact context.",
+    )
+    _add_slice_path_arguments(slices_retry)
+    slices_retry.add_argument(
+        "--run-dir",
+        help="Explicit slice run directory. Defaults to the latest run under the artifacts dir.",
+    )
+    slices_retry.add_argument(
+        "--max-review-rounds",
+        type=int,
+        default=3,
+        help="Maximum worker/reviewer revision rounds allowed for the retry run.",
+    )
+    slices_retry.add_argument(
+        "--agent-timeout-seconds",
+        type=int,
+        default=None,
+        help=(
+            "Legacy override applied to both worker and reviewer Codex runs. "
+            "Use 0 to disable both timeouts."
+        ),
+    )
+    slices_retry.add_argument(
+        "--worker-timeout-seconds",
+        type=int,
+        default=None,
+        help=(
+            "Maximum runtime for each worker Codex run. "
+            "Defaults to 900 seconds. Use 0 to disable the timeout."
+        ),
+    )
+    slices_retry.add_argument(
+        "--reviewer-timeout-seconds",
+        type=int,
+        default=None,
+        help=(
+            "Maximum runtime for each reviewer Codex run. "
+            "Defaults to 300 seconds. Use 0 to disable the timeout."
+        ),
+    )
+    slices_retry.add_argument(
+        "--codex-bin",
+        default="codex",
+        help="Codex CLI binary to invoke for worker and reviewer runs.",
+    )
+    slices_retry.add_argument(
+        "--model",
+        help="Optional Codex model override for worker and reviewer runs.",
+    )
+    slices_retry.add_argument(
+        "--codex-arg",
+        action="append",
+        help="Additional argument to pass through to `codex exec`. Repeat as needed.",
+    )
+    slices_retry.set_defaults(func=command_slices_retry)
     slices_run = slices_subparsers.add_parser(
         "run",
         help="Automate the worker/reviewer loop for one or more implementation slices.",

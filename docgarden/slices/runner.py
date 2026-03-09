@@ -136,6 +136,97 @@ def run_slice_loop(
     }
 
 
+def retry_slice_run(
+    repo_root: Path,
+    prior_run_dir: Path,
+    *,
+    paths: SliceAutomationPaths | None = None,
+    max_review_rounds: int = 3,
+    worker_timeout_seconds: int | None = DEFAULT_WORKER_TIMEOUT_SECONDS,
+    reviewer_timeout_seconds: int | None = DEFAULT_REVIEWER_TIMEOUT_SECONDS,
+    codex_bin: str = "codex",
+    model: str | None = None,
+    codex_args: list[str] | None = None,
+) -> dict[str, Any]:
+    resolved_paths = paths or build_slice_paths(repo_root)
+    status = load_slice_run_status(prior_run_dir)
+    prior_status = str(status.get("status", "unknown"))
+    if prior_status == "ready_for_next_slice":
+        raise DocgardenError(
+            f"Cannot retry successful slice run: {prior_run_dir}."
+        )
+
+    slice_id = status.get("slice_id")
+    if not isinstance(slice_id, str) or not slice_id:
+        raise DocgardenError(
+            f"Slice run status is missing `slice_id`: {prior_run_dir / 'run-status.json'}."
+        )
+    catalog = load_slice_catalog(repo_root, paths=resolved_paths)
+    slice_def = catalog.by_id(slice_id)
+    next_slice = catalog.next_after(slice_id)
+
+    last_worker_output = status.get("last_worker_output")
+    if not isinstance(last_worker_output, str) or not last_worker_output:
+        worker_outputs = sorted(prior_run_dir.glob("worker-round-*.output.json"))
+        if worker_outputs:
+            last_worker_output = str(worker_outputs[-1])
+    last_review_output = status.get("last_review_output")
+    if not isinstance(last_review_output, str) or not last_review_output:
+        review_outputs = sorted(prior_run_dir.glob("review-round-*.output.json"))
+        if review_outputs:
+            last_review_output = str(review_outputs[-1])
+
+    current_round = status.get("current_round")
+    if not isinstance(current_round, int) or current_round < 1:
+        current_round = 1
+
+    retry_options: dict[str, Any] = {
+        "initial_round_number": current_round,
+        "previous_worker_output_path": Path(last_worker_output)
+        if isinstance(last_worker_output, str) and last_worker_output
+        else None,
+        "prior_review_path": Path(last_review_output)
+        if isinstance(last_review_output, str) and last_review_output
+        else None,
+        "start_with_review": False,
+        "retry_of": str(prior_run_dir),
+    }
+
+    if retry_options["prior_review_path"] is not None:
+        if status.get("current_phase") == "review" and retry_options["previous_worker_output_path"] is not None:
+            retry_options["start_with_review"] = True
+        else:
+            retry_options["initial_round_number"] = current_round
+    elif retry_options["previous_worker_output_path"] is not None:
+        retry_options["start_with_review"] = True
+    else:
+        retry_options["initial_round_number"] = current_round
+
+    result = _run_single_slice(
+        repo_root,
+        paths=resolved_paths,
+        loop_root=resolved_paths.artifacts_dir,
+        slice_def=slice_def,
+        next_slice=next_slice,
+        max_review_rounds=max_review_rounds,
+        worker_timeout_seconds=worker_timeout_seconds,
+        reviewer_timeout_seconds=reviewer_timeout_seconds,
+        codex_bin=codex_bin,
+        model=model,
+        codex_args=codex_args or [],
+        **retry_options,
+    )
+    return {
+        "status": (
+            "completed"
+            if result.recommendation == "ready_for_next_slice"
+            else "stopped"
+        ),
+        "retried_from": str(prior_run_dir),
+        "results": [asdict(result)],
+    }
+
+
 def _run_single_slice(
     repo_root: Path,
     *,
@@ -149,6 +240,11 @@ def _run_single_slice(
     codex_bin: str,
     model: str | None,
     codex_args: list[str],
+    initial_round_number: int = 1,
+    prior_review_path: Path | None = None,
+    previous_worker_output_path: Path | None = None,
+    start_with_review: bool = False,
+    retry_of: str | None = None,
 ) -> SliceRunResult:
     timestamp = datetime.now().strftime("%Y-%m-%dT%H%M%S")
     run_dir = loop_root / f"{timestamp}-{slice_def.slice_id.lower()}"
@@ -160,8 +256,6 @@ def _run_single_slice(
 
     worker_outputs: list[str] = []
     review_outputs: list[str] = []
-    prior_review_path: Path | None = None
-    previous_worker_output_path: Path | None = None
     status_payload = {
         "slice_id": slice_def.slice_id,
         "title": slice_def.title,
@@ -172,9 +266,90 @@ def _run_single_slice(
         "worker_outputs": worker_outputs,
         "review_outputs": review_outputs,
     }
+    if retry_of is not None:
+        status_payload["retry_of"] = retry_of
     _write_run_status(run_dir, **status_payload, status="running")
 
-    for round_number in range(1, max_review_rounds + 1):
+    if start_with_review:
+        if previous_worker_output_path is None:
+            raise DocgardenError("Cannot retry from review without a prior worker output.")
+        review_prefix = f"review-round-{initial_round_number}"
+        review_status = {
+            "current_phase": "review",
+            "current_round": initial_round_number,
+            "current_prefix": review_prefix,
+        }
+        _write_run_status(
+            run_dir,
+            **status_payload,
+            status="running",
+            **review_status,
+            last_worker_output=str(previous_worker_output_path),
+        )
+        try:
+            review_run = _run_codex_agent(
+                repo_root,
+                run_dir=run_dir,
+                codex_bin=codex_bin,
+                codex_args=codex_args,
+                model=model,
+                prompt=build_review_prompt(
+                    repo_root,
+                    slice_def,
+                    next_slice=next_slice,
+                    paths=paths,
+                    worker_output_path=previous_worker_output_path,
+                    round_number=initial_round_number,
+                    prior_review_path=prior_review_path,
+                ),
+                schema=REVIEW_OUTPUT_SCHEMA,
+                prefix=review_prefix,
+                timeout_seconds=reviewer_timeout_seconds,
+                status_callback=_make_status_callback(
+                    run_dir,
+                    status_payload,
+                    review_status,
+                    last_worker_output=str(previous_worker_output_path),
+                ),
+            )
+        except DocgardenError as exc:
+            _write_run_status(
+                run_dir,
+                **status_payload,
+                **review_status,
+                status="failed",
+                last_worker_output=str(previous_worker_output_path),
+                error=str(exc),
+            )
+            raise
+        review_outputs.append(str(review_run.output_path))
+        prior_review_path = review_run.output_path
+        recommendation = str(review_run.parsed_output["recommendation"])
+        if recommendation in {
+            "ready_for_next_slice",
+            "blocked_pending_product_clarification",
+        }:
+            _write_run_status(
+                run_dir,
+                **status_payload,
+                status=recommendation,
+                **review_status,
+                last_worker_output=str(previous_worker_output_path),
+                last_review_output=str(review_run.output_path),
+                recommendation=recommendation,
+            )
+            return SliceRunResult(
+                slice_id=slice_def.slice_id,
+                title=slice_def.title,
+                recommendation=recommendation,
+                worker_rounds=initial_round_number,
+                run_dir=str(run_dir),
+                worker_outputs=worker_outputs,
+                review_outputs=review_outputs,
+            )
+        initial_round_number += 1
+
+    for round_number in range(initial_round_number, max_review_rounds + 1):
         worker_prompt = build_implementation_prompt(
             repo_root,
             slice_def,

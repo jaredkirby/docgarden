@@ -24,6 +24,7 @@ from .slices import (
     recover_slice_run,
     resolve_slice_run_dir,
     load_slice_catalog,
+    retry_slice_run,
     stop_slice_run,
     summarize_slice_run,
     run_slice_loop,
@@ -404,6 +405,37 @@ def command_slices_recover(args: argparse.Namespace) -> int:
     return 0
 
 
+def command_slices_retry(args: argparse.Namespace) -> int:
+    if args.max_review_rounds < 1:
+        raise DocgardenError(
+            "`docgarden slices retry --max-review-rounds` must be at least 1."
+        )
+    worker_timeout_seconds, reviewer_timeout_seconds = _resolve_slice_timeout_args(
+        args,
+        command_name="retry",
+    )
+    repo_root = Path.cwd()
+    paths = _slice_paths_from_args(repo_root, args)
+    run_dir = resolve_slice_run_dir(paths.artifacts_dir, run_dir=args.run_dir)
+    summary = retry_slice_run(
+        repo_root,
+        run_dir,
+        paths=paths,
+        max_review_rounds=args.max_review_rounds,
+        worker_timeout_seconds=(
+            None if worker_timeout_seconds == 0 else worker_timeout_seconds
+        ),
+        reviewer_timeout_seconds=(
+            None if reviewer_timeout_seconds == 0 else reviewer_timeout_seconds
+        ),
+        codex_bin=args.codex_bin,
+        model=args.model,
+        codex_args=args.codex_arg or [],
+    )
+    print(json.dumps(summary, indent=2, sort_keys=True))
+    return 0 if summary.get("status") == "completed" else 1
+
+
 def command_slices_run(args: argparse.Namespace) -> int:
     if args.max_slices < 0:
         raise DocgardenError("`docgarden slices run --max-slices` must be 0 or greater.")
@@ -411,35 +443,10 @@ def command_slices_run(args: argparse.Namespace) -> int:
         raise DocgardenError(
             "`docgarden slices run --max-review-rounds` must be at least 1."
         )
-    if (
-        args.agent_timeout_seconds is not None
-        and (args.worker_timeout_seconds is not None or args.reviewer_timeout_seconds is not None)
-    ):
-        raise DocgardenError(
-            "Use either `--agent-timeout-seconds` or the per-role timeout flags, not both."
-        )
-    if args.agent_timeout_seconds is not None and args.agent_timeout_seconds < 0:
-        raise DocgardenError(
-            "`docgarden slices run --agent-timeout-seconds` must be 0 or greater."
-        )
-    if args.worker_timeout_seconds is not None and args.worker_timeout_seconds < 0:
-        raise DocgardenError(
-            "`docgarden slices run --worker-timeout-seconds` must be 0 or greater."
-        )
-    if args.reviewer_timeout_seconds is not None and args.reviewer_timeout_seconds < 0:
-        raise DocgardenError(
-            "`docgarden slices run --reviewer-timeout-seconds` must be 0 or greater."
-        )
-
-    worker_timeout_seconds = DEFAULT_WORKER_TIMEOUT_SECONDS
-    reviewer_timeout_seconds = DEFAULT_REVIEWER_TIMEOUT_SECONDS
-    if args.agent_timeout_seconds is not None:
-        worker_timeout_seconds = args.agent_timeout_seconds
-        reviewer_timeout_seconds = args.agent_timeout_seconds
-    if args.worker_timeout_seconds is not None:
-        worker_timeout_seconds = args.worker_timeout_seconds
-    if args.reviewer_timeout_seconds is not None:
-        reviewer_timeout_seconds = args.reviewer_timeout_seconds
+    worker_timeout_seconds, reviewer_timeout_seconds = _resolve_slice_timeout_args(
+        args,
+        command_name="run",
+    )
 
     slice_paths = _slice_paths_from_args(Path.cwd(), args)
     summary = run_slice_loop(
@@ -470,3 +477,35 @@ def _slice_paths_from_args(repo_root: Path, args: argparse.Namespace):
         spec_slicing_plan=getattr(args, "plan_path", None),
         artifacts_dir=getattr(args, "artifacts_dir", None),
     )
+
+
+def _resolve_slice_timeout_args(
+    args: argparse.Namespace,
+    *,
+    command_name: str,
+) -> tuple[int, int]:
+    prefix = f"`docgarden slices {command_name}"
+    if (
+        args.agent_timeout_seconds is not None
+        and (args.worker_timeout_seconds is not None or args.reviewer_timeout_seconds is not None)
+    ):
+        raise DocgardenError(
+            "Use either `--agent-timeout-seconds` or the per-role timeout flags, not both."
+        )
+    if args.agent_timeout_seconds is not None and args.agent_timeout_seconds < 0:
+        raise DocgardenError(f"{prefix} --agent-timeout-seconds` must be 0 or greater.")
+    if args.worker_timeout_seconds is not None and args.worker_timeout_seconds < 0:
+        raise DocgardenError(f"{prefix} --worker-timeout-seconds` must be 0 or greater.")
+    if args.reviewer_timeout_seconds is not None and args.reviewer_timeout_seconds < 0:
+        raise DocgardenError(f"{prefix} --reviewer-timeout-seconds` must be 0 or greater.")
+
+    worker_timeout_seconds = DEFAULT_WORKER_TIMEOUT_SECONDS
+    reviewer_timeout_seconds = DEFAULT_REVIEWER_TIMEOUT_SECONDS
+    if args.agent_timeout_seconds is not None:
+        worker_timeout_seconds = args.agent_timeout_seconds
+        reviewer_timeout_seconds = args.agent_timeout_seconds
+    if args.worker_timeout_seconds is not None:
+        worker_timeout_seconds = args.worker_timeout_seconds
+    if args.reviewer_timeout_seconds is not None:
+        reviewer_timeout_seconds = args.reviewer_timeout_seconds
+    return worker_timeout_seconds, reviewer_timeout_seconds
