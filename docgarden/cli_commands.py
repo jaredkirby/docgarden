@@ -1,11 +1,8 @@
 from __future__ import annotations
 
 import argparse
-from dataclasses import asdict
-from datetime import datetime
 import json
 import os
-import time
 import sys
 from pathlib import Path
 
@@ -16,38 +13,16 @@ from .fixers import apply_safe_fixes, preview_safe_fixes
 from .models import RepoPaths
 from .pr_drafts import build_pr_draft_payload, publish_pr_draft
 from .quality import write_quality_score
-from .scan_workflow import run_changed_scan, run_scan
-from .slices import (
-    DEFAULT_REVIEWER_TIMEOUT_SECONDS,
-    DEFAULT_WORKER_TIMEOUT_SECONDS,
-    build_implementation_prompt,
-    build_review_prompt,
-    build_slice_paths,
-    list_slice_runs,
-    prune_slice_runs,
-    recover_slice_run,
-    resolve_slice_run_dir,
-    load_slice_catalog,
-    retry_slice_run,
-    stop_slice_run,
-    summarize_slice_run,
-    run_slice_loop,
-)
+from .scan.workflow import run_changed_scan, run_scan
 from .state import (
     actionable_findings_from_latest_events,
     ensure_state_dirs,
-    import_review,
     load_findings_history,
     load_plan,
     load_score,
     next_active_event,
     ordered_active_events,
-    prepare_review_packet,
     latest_events_by_id,
-    record_plan_resolution,
-    record_plan_triage_stage,
-    reopen_plan_finding,
-    set_plan_focus,
 )
 
 
@@ -124,7 +99,7 @@ def command_status(_: argparse.Namespace) -> None:
         json.dumps(
             {
                 "active_findings": len(active),
-                "open_ids": [event["id"] for event in active[:10]],
+                "open_ids": [event.id for event in active[:10]],
                 "overall_score": score.overall_score if score else None,
                 "strict_score": score.strict_score if score else None,
             },
@@ -146,133 +121,7 @@ def command_next(_: argparse.Namespace) -> None:
     if next_item is None:
         print("No open findings.")
         return
-    print(json.dumps(next_item, indent=2))
-
-
-def _parse_domain_args(raw_domains: str | None) -> list[str]:
-    if not raw_domains:
-        return []
-    return [domain.strip() for domain in raw_domains.split(",") if domain.strip()]
-
-
-def command_review_prepare(args: argparse.Namespace) -> None:
-    paths = repo_paths(Path.cwd())
-    packet_path, payload = prepare_review_packet(
-        paths.repo_root,
-        paths.state_dir,
-        domains=_parse_domain_args(args.domains),
-    )
-    print(
-        json.dumps(
-            {
-                "packet_id": payload["packet_id"],
-                "path": str(packet_path),
-                "domains": payload["scope"]["domains"],
-                "documents": payload["scope"]["documents"],
-                "skipped_documents": payload["scope"]["skipped_documents"],
-                "mechanical_findings": len(payload["mechanical_findings"]),
-            },
-            indent=2,
-            sort_keys=True,
-        )
-    )
-
-
-def command_review_import(args: argparse.Namespace) -> None:
-    paths = repo_paths(Path.cwd())
-    stored_review_path, stored_payload, findings, plan = import_review(
-        paths,
-        Path(args.file),
-        imported_at=datetime.now(),
-    )
-    print(
-        json.dumps(
-            {
-                "review_id": stored_payload["review_id"],
-                "packet_id": stored_payload["packet_id"],
-                "stored_review": str(stored_review_path),
-                "finding_ids": [finding.id for finding in findings],
-                "plan": asdict(plan),
-            },
-            indent=2,
-            sort_keys=True,
-        )
-    )
-
-
-def command_plan(_: argparse.Namespace) -> None:
-    paths = repo_paths(Path.cwd())
-    print(json.dumps(asdict(_ensure_plan(paths)), indent=2, sort_keys=True))
-
-
-def command_plan_triage(args: argparse.Namespace) -> None:
-    paths = repo_paths(Path.cwd())
-    _ensure_plan(paths)
-    updated_plan = record_plan_triage_stage(
-        paths.plan,
-        stage=args.stage,
-        report=args.report,
-        updated_at=datetime.now(),
-    )
-    print(json.dumps(asdict(updated_plan), indent=2, sort_keys=True))
-
-
-def command_plan_focus(args: argparse.Namespace) -> None:
-    paths = repo_paths(Path.cwd())
-    _ensure_plan(paths)
-    updated_plan = set_plan_focus(
-        paths.plan,
-        paths.findings,
-        target=args.target,
-        updated_at=datetime.now(),
-    )
-    print(json.dumps(asdict(updated_plan), indent=2, sort_keys=True))
-
-
-def command_plan_resolve(args: argparse.Namespace) -> None:
-    paths = repo_paths(Path.cwd())
-    _ensure_plan(paths)
-    event, updated_plan = record_plan_resolution(
-        paths.plan,
-        paths.findings,
-        args.finding_id,
-        status=args.result,
-        event_at=datetime.now(),
-        attestation=args.attest,
-        resolved_by=_current_actor(),
-    )
-    print(
-        json.dumps(
-            {
-                "event": event,
-                "plan": asdict(updated_plan),
-            },
-            indent=2,
-            sort_keys=True,
-        )
-    )
-
-
-def command_plan_reopen(args: argparse.Namespace) -> None:
-    paths = repo_paths(Path.cwd())
-    _ensure_plan(paths)
-    event, updated_plan = reopen_plan_finding(
-        paths.plan,
-        paths.findings,
-        args.finding_id,
-        event_at=datetime.now(),
-        resolved_by=_current_actor(),
-    )
-    print(
-        json.dumps(
-            {
-                "event": event,
-                "plan": asdict(updated_plan),
-            },
-            indent=2,
-            sort_keys=True,
-        )
-    )
+    print(json.dumps(next_item.to_dict(), indent=2))
 
 
 def command_show(args: argparse.Namespace) -> int:
@@ -283,7 +132,7 @@ def command_show(args: argparse.Namespace) -> int:
     if not payload:
         print(f"Finding not found: {args.finding_id}", file=sys.stderr)
         return 1
-    print(json.dumps(payload, indent=2))
+    print(json.dumps(payload.to_dict(), indent=2))
     return 0
 
 
@@ -355,273 +204,3 @@ def command_doctor(_: argparse.Namespace) -> None:
         "state_dir": str(paths.state_dir),
     }
     print(json.dumps(status, indent=2))
-
-
-def command_slices_next(args: argparse.Namespace) -> int:
-    repo_root = Path.cwd()
-    paths = _slice_paths_from_args(repo_root, args)
-    catalog = load_slice_catalog(repo_root, paths=paths)
-    next_slice = catalog.next_actionable_slice()
-    if next_slice is None:
-        print("No queued or active slices remain.")
-        return 0
-    upcoming = catalog.next_after(next_slice.slice_id)
-    print(
-        json.dumps(
-            {
-                "slice_id": next_slice.slice_id,
-                "title": next_slice.title,
-                "status": next_slice.status,
-                "goal": next_slice.goal,
-                "depends_on": next_slice.depends_on,
-                "changes": next_slice.changes,
-                "acceptance": next_slice.acceptance,
-                "next_slice": upcoming.slice_id if upcoming is not None else None,
-            },
-            indent=2,
-            sort_keys=True,
-        )
-    )
-    return 0
-
-
-def command_slices_list(args: argparse.Namespace) -> int:
-    repo_root = Path.cwd()
-    paths = _slice_paths_from_args(repo_root, args)
-    payload = {
-        "artifacts_dir": str(paths.artifacts_dir),
-        "runs": list_slice_runs(paths.artifacts_dir),
-    }
-    print(json.dumps(payload, indent=2, sort_keys=True))
-    return 0
-
-
-def command_slices_kickoff_prompt(args: argparse.Namespace) -> None:
-    repo_root = Path.cwd()
-    paths = _slice_paths_from_args(repo_root, args)
-    catalog = load_slice_catalog(repo_root, paths=paths)
-    slice_def = (
-        catalog.by_id(args.slice_id)
-        if args.slice_id is not None
-        else catalog.next_actionable_slice()
-    )
-    if slice_def is None:
-        raise DocgardenError("No queued or active slices remain.")
-    next_slice = catalog.next_after(slice_def.slice_id)
-    print(
-        build_implementation_prompt(
-            repo_root,
-            slice_def,
-            next_slice=next_slice,
-            paths=paths,
-            round_number=args.round,
-            review_feedback_path=Path(args.review_feedback)
-            if args.review_feedback
-            else None,
-            previous_worker_output_path=Path(args.previous_worker_output)
-            if args.previous_worker_output
-            else None,
-        ),
-        end="",
-    )
-
-
-def command_slices_review_prompt(args: argparse.Namespace) -> None:
-    repo_root = Path.cwd()
-    paths = _slice_paths_from_args(repo_root, args)
-    catalog = load_slice_catalog(repo_root, paths=paths)
-    slice_def = (
-        catalog.by_id(args.slice_id)
-        if args.slice_id is not None
-        else catalog.next_actionable_slice()
-    )
-    if slice_def is None:
-        raise DocgardenError("No queued or active slices remain.")
-    next_slice = catalog.next_after(slice_def.slice_id)
-    print(
-        build_review_prompt(
-            repo_root,
-            slice_def,
-            next_slice=next_slice,
-            paths=paths,
-            worker_output_path=Path(args.worker_output),
-            round_number=args.round,
-            prior_review_path=Path(args.prior_review_output)
-            if args.prior_review_output
-            else None,
-        ),
-        end="",
-    )
-
-
-def command_slices_watch(args: argparse.Namespace) -> int:
-    repo_root = Path.cwd()
-    paths = _slice_paths_from_args(repo_root, args)
-    if args.max_updates < 0:
-        raise DocgardenError("`docgarden slices watch --max-updates` must be 0 or greater.")
-    if args.interval_seconds <= 0:
-        raise DocgardenError(
-            "`docgarden slices watch --interval-seconds` must be greater than 0."
-        )
-    run_dir = resolve_slice_run_dir(paths.artifacts_dir, run_dir=args.run_dir)
-    updates = 0
-    while True:
-        summary = summarize_slice_run(run_dir)
-        print(json.dumps(summary, indent=2, sort_keys=True))
-        updates += 1
-        status = summary["status"].get("status")
-        if status != "running":
-            return 0
-        if args.max_updates and updates >= args.max_updates:
-            return 0
-        time.sleep(args.interval_seconds)
-
-
-def command_slices_stop(args: argparse.Namespace) -> int:
-    repo_root = Path.cwd()
-    paths = _slice_paths_from_args(repo_root, args)
-    run_dir = resolve_slice_run_dir(paths.artifacts_dir, run_dir=args.run_dir)
-    summary = stop_slice_run(run_dir)
-    print(json.dumps(summary, indent=2, sort_keys=True))
-    return 0
-
-
-def command_slices_recover(args: argparse.Namespace) -> int:
-    repo_root = Path.cwd()
-    paths = _slice_paths_from_args(repo_root, args)
-    run_dir = resolve_slice_run_dir(paths.artifacts_dir, run_dir=args.run_dir)
-    recovery = recover_slice_run(
-        repo_root,
-        run_dir,
-        verify=not args.skip_verification,
-    )
-    print(json.dumps(recovery, indent=2, sort_keys=True))
-    if args.skip_verification:
-        return 0
-    verification = recovery.get("verification", {})
-    pytest_result = verification.get("pytest", {})
-    scan_result = verification.get("scan", {})
-    if pytest_result.get("returncode", 0) != 0 or scan_result.get("returncode", 0) != 0:
-        return 1
-    return 0
-
-
-def command_slices_retry(args: argparse.Namespace) -> int:
-    if args.max_review_rounds < 1:
-        raise DocgardenError(
-            "`docgarden slices retry --max-review-rounds` must be at least 1."
-        )
-    worker_timeout_seconds, reviewer_timeout_seconds = _resolve_slice_timeout_args(
-        args,
-        command_name="retry",
-    )
-    repo_root = Path.cwd()
-    paths = _slice_paths_from_args(repo_root, args)
-    run_dir = resolve_slice_run_dir(paths.artifacts_dir, run_dir=args.run_dir)
-    summary = retry_slice_run(
-        repo_root,
-        run_dir,
-        paths=paths,
-        max_review_rounds=args.max_review_rounds,
-        worker_timeout_seconds=(
-            None if worker_timeout_seconds == 0 else worker_timeout_seconds
-        ),
-        reviewer_timeout_seconds=(
-            None if reviewer_timeout_seconds == 0 else reviewer_timeout_seconds
-        ),
-        codex_bin=args.codex_bin,
-        model=args.model,
-        codex_args=args.codex_arg or [],
-    )
-    print(json.dumps(summary, indent=2, sort_keys=True))
-    return 0 if summary.get("status") == "completed" else 1
-
-
-def command_slices_prune(args: argparse.Namespace) -> int:
-    if args.keep < 0:
-        raise DocgardenError("`docgarden slices prune --keep` must be 0 or greater.")
-    repo_root = Path.cwd()
-    paths = _slice_paths_from_args(repo_root, args)
-    payload = prune_slice_runs(
-        paths.artifacts_dir,
-        keep=args.keep,
-        apply=args.apply,
-        prunable_statuses=set(args.statuses) if args.statuses else None,
-    )
-    print(json.dumps(payload, indent=2, sort_keys=True))
-    return 0
-
-
-def command_slices_run(args: argparse.Namespace) -> int:
-    if args.max_slices < 0:
-        raise DocgardenError("`docgarden slices run --max-slices` must be 0 or greater.")
-    if args.max_review_rounds < 1:
-        raise DocgardenError(
-            "`docgarden slices run --max-review-rounds` must be at least 1."
-        )
-    worker_timeout_seconds, reviewer_timeout_seconds = _resolve_slice_timeout_args(
-        args,
-        command_name="run",
-    )
-
-    slice_paths = _slice_paths_from_args(Path.cwd(), args)
-    summary = run_slice_loop(
-        Path.cwd(),
-        paths=slice_paths,
-        start_slice=args.from_slice,
-        max_slices=args.max_slices,
-        max_review_rounds=args.max_review_rounds,
-        worker_timeout_seconds=(
-            None if worker_timeout_seconds == 0 else worker_timeout_seconds
-        ),
-        reviewer_timeout_seconds=(
-            None if reviewer_timeout_seconds == 0 else reviewer_timeout_seconds
-        ),
-        codex_bin=args.codex_bin,
-        model=args.model,
-        codex_args=args.codex_arg or [],
-    )
-    print(json.dumps(summary, indent=2, sort_keys=True))
-    return 0 if summary.get("status") in {"completed", "noop"} else 1
-
-
-def _slice_paths_from_args(repo_root: Path, args: argparse.Namespace):
-    return build_slice_paths(
-        repo_root,
-        implementation_slices=getattr(args, "catalog_path", None),
-        spec=getattr(args, "spec_path", None),
-        spec_slicing_plan=getattr(args, "plan_path", None),
-        artifacts_dir=getattr(args, "artifacts_dir", None),
-    )
-
-
-def _resolve_slice_timeout_args(
-    args: argparse.Namespace,
-    *,
-    command_name: str,
-) -> tuple[int, int]:
-    prefix = f"`docgarden slices {command_name}"
-    if (
-        args.agent_timeout_seconds is not None
-        and (args.worker_timeout_seconds is not None or args.reviewer_timeout_seconds is not None)
-    ):
-        raise DocgardenError(
-            "Use either `--agent-timeout-seconds` or the per-role timeout flags, not both."
-        )
-    if args.agent_timeout_seconds is not None and args.agent_timeout_seconds < 0:
-        raise DocgardenError(f"{prefix} --agent-timeout-seconds` must be 0 or greater.")
-    if args.worker_timeout_seconds is not None and args.worker_timeout_seconds < 0:
-        raise DocgardenError(f"{prefix} --worker-timeout-seconds` must be 0 or greater.")
-    if args.reviewer_timeout_seconds is not None and args.reviewer_timeout_seconds < 0:
-        raise DocgardenError(f"{prefix} --reviewer-timeout-seconds` must be 0 or greater.")
-
-    worker_timeout_seconds = DEFAULT_WORKER_TIMEOUT_SECONDS
-    reviewer_timeout_seconds = DEFAULT_REVIEWER_TIMEOUT_SECONDS
-    if args.agent_timeout_seconds is not None:
-        worker_timeout_seconds = args.agent_timeout_seconds
-        reviewer_timeout_seconds = args.agent_timeout_seconds
-    if args.worker_timeout_seconds is not None:
-        worker_timeout_seconds = args.worker_timeout_seconds
-    if args.reviewer_timeout_seconds is not None:
-        reviewer_timeout_seconds = args.reviewer_timeout_seconds
-    return worker_timeout_seconds, reviewer_timeout_seconds

@@ -12,6 +12,30 @@ class SliceAutomationPaths:
     artifacts_dir: Path
 
 
+@dataclass(frozen=True, slots=True)
+class SliceRunConfig:
+    max_review_rounds: int
+    worker_timeout_seconds: int | None
+    reviewer_timeout_seconds: int | None
+    codex_bin: str
+    model: str | None
+    codex_args: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class SliceRunRequest:
+    repo_root: Path
+    paths: SliceAutomationPaths
+    loop_root: Path
+    slice_def: "SliceDefinition"
+    next_slice: "SliceDefinition | None"
+    config: SliceRunConfig
+
+
+DEFAULT_WORKER_TIMEOUT_SECONDS = 900
+DEFAULT_REVIEWER_TIMEOUT_SECONDS = 300
+
+
 def build_slice_paths(
     repo_root: Path,
     *,
@@ -47,3 +71,22 @@ def build_slice_paths(
 def _resolve_repo_path(repo_root: Path, value: str | Path | None, *, default: Path) -> Path:
     candidate = Path(value) if value is not None else default
     return candidate if candidate.is_absolute() else repo_root / candidate
+
+
+def build_slice_run_config(
+    *,
+    max_review_rounds: int,
+    worker_timeout_seconds: int | None = DEFAULT_WORKER_TIMEOUT_SECONDS,
+    reviewer_timeout_seconds: int | None = DEFAULT_REVIEWER_TIMEOUT_SECONDS,
+    codex_bin: str = "codex",
+    model: str | None = None,
+    codex_args: list[str] | tuple[str, ...] | None = None,
+) -> SliceRunConfig:
+    return SliceRunConfig(
+        max_review_rounds=max_review_rounds,
+        worker_timeout_seconds=worker_timeout_seconds,
+        reviewer_timeout_seconds=reviewer_timeout_seconds,
+        codex_bin=codex_bin,
+        model=model,
+        codex_args=tuple(codex_args or ()),
+    )

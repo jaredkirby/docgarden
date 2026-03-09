@@ -4,7 +4,7 @@ doc_type: exec-plan
 domain: exec-plans
 owner: kirby
 status: draft
-last_reviewed: 2026-03-08
+last_reviewed: 2026-03-09
 review_cycle_days: 14
 applies_to:
   - repo
@@ -94,12 +94,101 @@ code itself rather than cosmetically gaming the score.
   `scripts/codex-otel-no-proxy.patch` and a local reinstall helper at
   `scripts/reapply_codex_macos_proxy_fix.sh` so future upgrades can reapply the
   workaround without rediscovering the crash.
-- 2026-03-08: Extracted scan execution into `docgarden/scan_workflow.py`,
+- 2026-03-08: Extracted scan execution into `docgarden/scan/workflow.py`,
   routed `next`/`status` through persisted plan order in `state.py`, and added
   CLI regression coverage for plan-driven queue behavior.
 - 2026-03-08: Introduced `FindingContext`, removed redundant dataclass
   serializer wrappers, preserved triage state across rescans, and made
   `fix safe --apply` resync persisted state after file mutations.
+- 2026-03-09: Added a typed `FindingRecord` boundary for persisted findings
+  history and latest-event flows, moved the CLI/state plumbing off raw dict
+  payloads internally, and kept the touched surface green across the full
+  `pytest` suite.
+- 2026-03-09: Trimmed the config surface to live runtime knobs only by removing
+  unused `repo_name`, `review_defaults`, and `safe_autofix` fields from the
+  runtime model, repo config, and canonical spec example.
+- 2026-03-09: Added a shared `FindingSpec` builder layer and migrated the
+  scanner modules onto it so finding metadata assembly no longer fans out
+  through ad hoc `FindingContext` plus `Finding.open_issue` call shapes.
+- 2026-03-09: Finished migrating scan finding construction onto the shared
+  `scan/findings.py` factory helpers and replaced imperative scan orchestration
+  in `scan/scanner.py` with declarative document and repo rule registries.
+- 2026-03-09: Extracted the scanner modules into a dedicated `docgarden.scan`
+  package so alignment, linkage, document-rule, and workflow code now share a
+  coherent package boundary instead of a flat top-level cluster.
+- 2026-03-09: Re-ran the stale subjective review dimensions with a temporary
+  MCP-disabled `codex` wrapper so the batch runner could complete on macOS,
+  then imported the refreshed review evidence back into the living queue.
+- 2026-03-09: Closed the first `runtime-contracts` batch by adding a typed
+  `MarkdownError` boundary for document reads/frontmatter parsing and making PR
+  draft git-state failures fail explicitly instead of silently degrading to
+  empty change lists; the full `pytest` suite stayed green.
+- 2026-03-09: Completed the `state-contracts` batch by making plan rebuilds
+  recompute a fresh severity-first queue, preserve prior ordering only within
+  equal-severity work, and drop stale focus when a newly higher-severity
+  finding appears; added regression coverage to keep the queue honest across
+  rescans.
+- 2026-03-09: Added direct regression coverage for `scan/findings.py`,
+  `automation`, and `pr_drafts`, and fixed a shallow-copy bug in
+  `build_finding()` so nested `details` payloads no longer mutate after the
+  finding is built.
+- 2026-03-09: Added an explicit `SliceRunStatus` contract in
+  `docgarden/slices/runner.py` so run-status reads and writes share one
+  declared shape instead of a free-form dict bag, which clears the top
+  phantom-read batch and lays groundwork for the broader slice-runner refactor.
+- 2026-03-09: Normalized sparse slice-run status payloads so legacy and
+  partially written `run-status.json` files expose explicit defaults for
+  `title`, `current_phase`, `elapsed_seconds`, and `retry_of`, then trimmed
+  small wrapper behavior in `scan_alignment` and `cli_commands` to keep the
+  code-quality queue moving while the larger slice-runtime refactor remains in
+  front of the subjective plan.
+- 2026-03-09: Reduced another small code-quality batch by giving
+  `infer_promotion_destination_docs()` direct ownership of canonical hint
+  ranking and extracting timeout validation in `cli_commands.py` into a shared
+  helper, which kept adjacent wrapper/complexity cleanup localized without
+  changing CLI behavior.
+- 2026-03-09: Removed the redundant slice facade routes by deleting
+  `docgarden/slice_automation.py`, shrinking `docgarden/slices/__init__.py`
+  into a package marker, and updating runtime/tests/docs to import concrete
+  `docgarden.slices.*` modules directly.
+- 2026-03-09: Added direct unit coverage for `docgarden.slices.prompts` and
+  `docgarden.slices.runner`, covering prompt revision context, normalized
+  run-status loading, artifact-path partitioning, and recovery recommendation
+  precedence instead of relying on CLI-level transitive coverage.
+- 2026-03-09: Split persisted slice-run status and recovery concerns out of
+  `docgarden/slices/runner.py` into dedicated `run_status.py` and
+  `run_recovery.py` modules, then updated the CLI and tests to use the
+  narrower boundaries directly.
+- 2026-03-09: Made the slice loop dependency-aware by teaching the catalog to
+  skip blocked queued slices, rejecting explicit blocked `run --from-slice`
+  starts, and separating “next runnable” from “next planned” so prompts still
+  warn against spillover into the immediately following slice.
+- 2026-03-09: Converted slice-loop persisted state from a loose status dict
+  into an explicit `SliceRunStatusRecord`, routed runner status transitions
+  through that model, added a `stopped_no_progress` guardrail for repeated
+  identical review findings, and bounded recovery verification subprocesses
+  with timeout-aware reporting.
+- 2026-03-09: Pulled nested agent subprocess execution and heartbeat/log
+  handling into `docgarden/slices/run_agent.py`, shrinking `runner.py` back
+  toward a pure orchestration role after the status-model and progress-guard
+  refactor had pushed it further into structural debt.
+- 2026-03-09: Kept pushing the runner structural batch by moving run-request
+  configuration into `docgarden/slices/config.py` and review-signature parsing
+  into `docgarden/slices/review_progress.py`, dropping the runner to a much
+  smaller orchestration-focused module without changing CLI behavior.
+- 2026-03-09: Finished that structural slice by extracting the worker/reviewer
+  execution loop into `docgarden/slices/run_execution.py`, which reduced
+  `runner.py` to a thin orchestration facade and kept the queue focused on the
+  next real hotspots instead of a single overgrown module.
+- 2026-03-09: Followed the next abstraction-fit cluster by splitting slice CLI
+  parser wiring and handlers into `docgarden/cli_slices.py`,
+  `docgarden/cli_slices_commands.py`, and `docgarden/cli_slices_runtime.py`,
+  which sharply reduced `cli.py` and `cli_commands.py` instead of keeping
+  slice orchestration behind broad facade-style modules.
+- 2026-03-09: Pushed the same cluster further by moving review and plan CLI
+  registration/handlers into `docgarden/cli_plan_review.py`, which brought
+  `cli.py` down to a shell-sized module and cut `cli_commands.py` to the
+  remaining non-slice operational commands.
 
 ## Discoveries
 
@@ -142,6 +231,47 @@ code itself rather than cosmetically gaming the score.
   freshness checks were limited to currently `verified` docs; otherwise a doc
   could be marked `needs-review` and still immediately re-open the same stale
   finding on the next scan.
+- `desloppify scan` now refuses an early full rescan while objective queue
+  items remain unless we explicitly force the reset, so mid-pass rescans should
+  only be attempted when the workflow tradeoff is worth losing the existing
+  plan-start baseline.
+- A small shared finding-builder layer was enough to remove repeated scanner
+  finding assembly without introducing a heavyweight framework; the subjective
+  duplication issue was more about metadata fan-out than missing control flow.
+- The repo already had a partial `scan/findings.py` abstraction, but leaving
+  `scan/alignment.py` and `scan/scanner.py` half-migrated created a new kind of
+  coherence bug where helper signatures drifted and only surfaced under
+  full-scan coverage.
+- The current `desloppify review --run-batches` Codex path still starts MCP
+  servers by default, so local review reruns needed a temporary wrapper that
+  injects `-c mcp_servers.pencil.enabled=false` and
+  `-c mcp_servers.openaiDeveloperDocs.enabled=false` before the child `codex
+  exec` commands would stop panicking in this environment.
+- The refreshed review run exposed a `desloppify` import bug: sub-axis batches
+  like `delegation_density` and `definition_directness` emitted issue
+  dimensions that the Python importer rejects, and `review --import-run`
+  rebuilds from the raw batch artifacts rather than trusting a manually patched
+  merged payload.
+- The previous plan-preservation fix was still too aggressive: keeping the old
+  ordered queue and focus wholesale across rebuilds preserved operator intent,
+  but it also let stale medium-priority work outrank newly observed
+  high-severity findings.
+- Adding direct tests for previously transitive-only modules surfaced a real
+  mutability bug: `scan/findings.py::build_finding()` copied `details` only
+  shallowly, so later edits to the originating spec could silently change a
+  finding that had already been emitted.
+- The runner's persisted `run-status.json` shape was explicit in practice but
+  invisible to static analysis because `load_slice_run_status()` returned a raw
+  dict; that let both the scanner and humans infer less about the contract than
+  the code was actually relying on.
+- Several remaining T3 code-quality findings are good “support” work rather
+  than the main event: knocking them down can simplify the surface around the
+  slice-runtime refactor without pretending they solve the core design review
+  findings on their own.
+- The current top-level queue can reorder sharply after each forced rescan:
+  once one small code-quality batch lands, the next highest-leverage detector
+  can shift from file-health structure to localized smells, so the scan is
+  still worth using strategically after a real multi-fix batch.
 
 ## Decision Log
 
@@ -171,6 +301,37 @@ code itself rather than cosmetically gaming the score.
   post-autofix state immediately, because the targeted review rerun showed that
   queue churn and stale persisted findings were still undermining workflow
   coherence.
+- 2026-03-09: Resolve the remaining config-surface review issue by deleting
+  dead knobs instead of wiring speculative behavior, so `.docgarden/config.yaml`
+  and the design spec only document options the runtime actually honors today.
+- 2026-03-09: Address the scanner duplication review item with a lightweight
+  shared `FindingSpec` contract instead of a larger DSL, because the repo only
+  needed one common builder surface to make rule definitions declarative enough.
+- 2026-03-09: Rebuild plan order from current severity on each scan and treat
+  preserved focus as a narrow overlay, because manual queue intent is useful
+  only until it starts hiding newly urgent work from `next` and `status`.
+- 2026-03-09: Prefer direct behavioral tests for health-driven module coverage
+  gaps instead of only CLI-path coverage, because those narrower tests both
+  satisfy the mechanical finding honestly and expose local correctness bugs
+  sooner.
+- 2026-03-09: Introduce a small typed status boundary in the slice runner
+  before the larger orchestration refactor, because it removes immediate
+  phantom-read debt without precluding the later extraction of fuller phase and
+  dependency helpers.
+- 2026-03-09: Batch small wrapper-smell fixes only when they are adjacent to
+  the current execution thread, so mechanical score work keeps supporting the
+  slice-runtime architecture pass instead of distracting from it.
+- 2026-03-09: Prefer contained complexity reductions in shared validation or
+  routing helpers before larger cross-file smell sweeps, because they are easy
+  to verify end-to-end and improve the score without destabilizing the bigger
+  architectural work in flight.
+- 2026-03-09: Treat `scan/findings.py` plus scanner rule registries as the scan
+  layer DSL, and finish migrations onto that abstraction before adding any new
+  review logic.
+- 2026-03-09: Normalize markdown parsing and PR draft git-state failures now,
+  before the larger slice-runner refactors, because the new `error_consistency`
+  review evidence showed these were localized correctness bugs with clear test
+  seams and a high confidence fix path.
 
 ## Outcomes / Retrospective
 
@@ -183,3 +344,6 @@ code itself rather than cosmetically gaming the score.
 - The patched `codex` binary now reaches request execution cleanly; the old
   startup panic is gone and remaining failures are ordinary API auth errors
   when no credentials are present.
+- The refreshed review queue is now current again, with the remaining work
+  clustered around slice-runner design, typed status/state contracts, and
+  public-surface indirection rather than stale subjective scores.

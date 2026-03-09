@@ -68,7 +68,9 @@ inside `docgarden`.
 - 2026-03-09: Wired `docgarden slices run` to call `codex exec` with structured worker and reviewer output schemas and to persist run artifacts under `.docgarden/slice-loops/`.
 - 2026-03-09: Added tests covering backlog parsing, prompt rendering, and a multi-round worker/reviewer loop that revises once and then advances to the next slice.
 - 2026-03-09: Updated the README and plan routing so the new loop is discoverable from the normal repo entry points.
-- 2026-03-09: Repackaged the automation into a reusable `docgarden.slices` module and kept `docgarden.slice_automation` as a compatibility re-export.
+- 2026-03-09: Repackaged the automation into concrete `docgarden.slices.*`
+  modules and removed the redundant top-level `docgarden.slice_automation`
+  shim so callers import the real implementation boundaries directly.
 - 2026-03-09: Added configurable path resolution for the slice backlog, spec, exec plan, and artifact directory so other project repos can use the loop without copying this repo’s exact docs layout.
 - 2026-03-09: Added a default per-agent timeout for `docgarden slices run`, persisted partial stdout/stderr on timeout or nonzero exit, and covered those failure paths with regression tests after the first live run reproduced a stuck `codex exec` child process.
 - 2026-03-09: Sanitized parent `CODEX_*` session-control environment variables before spawning nested `codex exec` worker/reviewer runs, which let the first live temp-repo verification progress into real file reads and tool use instead of stalling before structured output.
@@ -85,6 +87,41 @@ inside `docgarden`.
 - 2026-03-09: Added `docgarden slices list` and dry-run-first `docgarden slices prune` so operators can manage accumulated slice-loop artifact directories without ad-hoc shell cleanup.
 - 2026-03-09: Added baseline repo-state snapshots to `run-status.json` and taught `docgarden slices recover` to report post-baseline deltas separately from pre-existing dirty worktree state.
 - 2026-03-09: Taught `docgarden slices recover` to separate expected untracked artifact-root paths into `run_artifact_untracked_paths` instead of mixing them into operator-facing `new_untracked_paths`.
+- 2026-03-09: Made slice scheduling dependency-aware so `next` and `run`
+  skip blocked queued slices, explicit `--from-slice` starts fail fast when
+  prerequisites are incomplete, and prompt context still references the next
+  planned slice to avoid spillover.
+- 2026-03-09: Replaced the slice-loop run-status dict bag with an explicit
+  `SliceRunStatusRecord` model plus transition helpers, so runner retries,
+  summaries, watch/stop flows, and persisted `run-status.json` all share one
+  typed contract.
+- 2026-03-09: Added a `stopped_no_progress` review-loop guardrail that halts a
+  slice when consecutive review rounds repeat the same findings without
+  material change, and bounded recovery verification subprocesses with timeout
+  metadata instead of letting `recover` hang behind a stuck verification step.
+- 2026-03-09: Split nested `codex exec` process control and heartbeat/log
+  management into `docgarden/slices/run_agent.py`, which pulled the biggest
+  subprocess chunk out of `runner.py` while keeping the runner focused on
+  slice-loop orchestration.
+- 2026-03-09: Moved run-request/config dataclasses into `config.py` and
+  review-signature artifact helpers into `review_progress.py`, which shrank
+  `runner.py` further without changing the slice-loop behavior or CLI
+  contract.
+- 2026-03-09: Split the per-slice execution engine out into
+  `docgarden/slices/run_execution.py`, leaving `runner.py` as the catalog and
+  retry entrypoint while the worker/reviewer phase loop, no-progress stop
+  handling, and terminal result assembly live behind a dedicated execution
+  module.
+- 2026-03-09: Split the slice CLI surface into explicit modules:
+  `docgarden/cli_slices.py` now owns parser registration,
+  `docgarden/cli_slices_commands.py` owns catalog/prompt commands, and
+  `docgarden/cli_slices_runtime.py` owns run/retry/recover/watch/prune
+  execution. That leaves `cli.py` as the top-level shell and shrinks
+  `cli_commands.py` back toward non-slice command families.
+- 2026-03-09: Continued the CLI responsibility split by moving review and plan
+  parser wiring plus handlers into `docgarden/cli_plan_review.py`, which cut
+  `cli.py` and `cli_commands.py` down to the core shell/non-slice command
+  surface instead of keeping every command family in the same two files.
 
 ## Discoveries
 
@@ -108,6 +145,16 @@ inside `docgarden`.
 - Artifact retention matters once the loop becomes useful; without list/prune helpers, the safer control-plane design just pushes operators back into manual filesystem cleanup.
 - Recovery recommendations get much more trustworthy when the runner remembers what the repo looked like at launch; otherwise `recover` cannot distinguish “the slice changed this” from “the operator was already mid-edit.”
 - Even after baseline diffing, the run’s own artifact directory is expected untracked output, so recovery JSON should label it explicitly instead of presenting it as suspicious repo drift.
+- Slice dependencies need two different interpretations: scheduling should look
+  for the next dependency-ready slice, while prompts still need the next
+  planned slice so workers can avoid spilling into the upcoming backlog item.
+- The next orchestration seam after dependency-aware scheduling was the
+  persisted run-status contract itself; once the status model became explicit,
+  retry/list/watch/stop code stopped having to remember the same keys
+  independently.
+- Max review rounds alone are not enough operator guardrails. A slice can make
+  it through several worker/reviewer passes without any real movement if the
+  reviewer keeps emitting the same actionable findings.
 
 ## Decision Log
 
@@ -115,7 +162,10 @@ inside `docgarden`.
 - 2026-03-09: Use `codex exec` with `--output-schema` and `--output-last-message` so the loop consumes structured JSON instead of brittle prose parsing.
 - 2026-03-09: Keep the default run bounded to one slice at a time with `--max-slices 1`, while allowing `--max-slices 0` for continuous advancement.
 - 2026-03-09: Persist run artifacts inside `.docgarden/` because the automation loop is an operational stateful workflow, not just a transient convenience wrapper.
-- 2026-03-09: Keep the reusable Python API under `docgarden.slices` and reserve the top-level `docgarden.slice_automation` import as a backwards-compatible shim.
+- 2026-03-09: Prefer concrete `docgarden.slices.catalog`,
+  `docgarden.slices.config`, `docgarden.slices.prompts`, and
+  `docgarden.slices.runner` imports over aggregate facade routes so the public
+  surface mirrors the actual implementation boundaries.
 - 2026-03-09: Add a default 300-second timeout per worker/reviewer `codex exec` invocation and allow `--agent-timeout-seconds 0` to disable it, so the loop fails fast instead of silently hanging behind a bad child process.
 - 2026-03-09: Persist partial stdout/stderr before raising timeout or nonzero-exit errors, so the artifact directory remains inspectable even when the agent process never produces structured JSON.
 - 2026-03-09: Strip inherited `CODEX_CI`, `CODEX_SANDBOX`, `CODEX_SANDBOX_NETWORK_DISABLED`, and `CODEX_THREAD_ID` from nested worker/reviewer launches, because those describe the parent Codex session rather than the child run we want `docgarden` to start.
@@ -128,10 +178,23 @@ inside `docgarden`.
 - 2026-03-09: Make artifact cleanup dry-run first. `prune` only deletes when `--apply` is passed and otherwise reports which finished runs would be removed after preserving the newest `--keep` entries.
 - 2026-03-09: Treat recovery as a diff against a recorded baseline, not just a snapshot of the current worktree, so dirty repos can still get actionable retry-vs-review guidance.
 - 2026-03-09: Keep expected slice-loop artifact dirt visible but quarantined in a dedicated recovery field so operators still see it without having to mentally subtract it from actionable repo changes.
+- 2026-03-09: Distinguish “next dependency-ready slice” from “next planned
+  slice” so scheduling honors prerequisites while worker/reviewer prompts still
+  mention the immediate upcoming backlog item for spillover guardrails.
+- 2026-03-09: Treat repeated identical `revise_before_next_slice` reviews as a
+  control-plane stop condition (`stopped_no_progress`) instead of blindly
+  spending the remaining review budget on a churn loop.
+- 2026-03-09: Keep recovery verification bounded with a timeout and surfaced
+  timeout metadata so `docgarden slices recover` stays inspectable even when
+  the follow-up validation commands wedge.
 
 ## Outcomes / Retrospective
 
 The loop now survives the first real-world integration traps better: bad agent
 launches fail fast, preserve the captured logs operators need, and no longer
 inherit the parent Codex session’s sandbox/thread controls when spawning nested
-worker or reviewer runs.
+worker or reviewer runs. The runner also has a cleaner status boundary now, so
+operator-facing controls (`watch`, `stop`, `recover`, `retry`) share one
+explicit persisted contract instead of reconstructing state from ad hoc dict
+keys, and repeated no-progress review churn stops early with a named terminal
+status instead of quietly burning through the remaining rounds.
