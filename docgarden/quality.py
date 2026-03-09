@@ -5,6 +5,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from .files import atomic_write_text
 from .markdown import replace_frontmatter, split_frontmatter
 from .models import Finding, Scorecard
 
@@ -146,6 +147,6 @@ def write_quality_score(path: Path, scorecard: Scorecard) -> None:
         frontmatter, _ = split_frontmatter(raw)
         if frontmatter:
             frontmatter["last_reviewed"] = scorecard.updated_at[:10]
-            path.write_text(replace_frontmatter(body, frontmatter))
+            atomic_write_text(path, replace_frontmatter(body, frontmatter))
             return
-    path.write_text(body)
+    atomic_write_text(path, body)

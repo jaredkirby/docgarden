@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from .files import atomic_write_text
 from .markdown import replace_frontmatter, split_frontmatter
 from .models import Finding
 
@@ -22,7 +23,7 @@ def apply_safe_fixes(repo_root: Path, findings: list[Finding]) -> list[str]:
                     continue
                 if frontmatter.get("status") != "needs-review":
                     frontmatter["status"] = "needs-review"
-                    file_path.write_text(replace_frontmatter(raw, frontmatter))
+                    atomic_write_text(file_path, replace_frontmatter(raw, frontmatter))
                     changed_files.add(file_name)
 
             if finding.kind == "missing-sections":
@@ -34,7 +35,7 @@ def apply_safe_fixes(repo_root: Path, findings: list[Finding]) -> list[str]:
                 for section in missing_sections:
                     additions.append(f"## {section}\n\nTODO: fill in.\n")
                 updated = raw.rstrip() + "\n\n" + "\n".join(additions)
-                file_path.write_text(updated + "\n")
+                atomic_write_text(file_path, updated + "\n")
                 changed_files.add(file_name)
 
     return sorted(changed_files)

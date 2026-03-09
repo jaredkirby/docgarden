@@ -6,6 +6,8 @@ from typing import Any
 
 import yaml
 
+from .errors import ConfigError
+
 
 @dataclass(slots=True)
 class Config:
@@ -20,8 +22,18 @@ class Config:
     def load(cls, path: Path) -> "Config":
         if not path.exists():
             return cls()
-        data = yaml.safe_load(path.read_text()) or {}
-        return cls(**data)
+        try:
+            data = yaml.safe_load(path.read_text()) or {}
+        except yaml.YAMLError as exc:
+            raise ConfigError(f"Invalid config at {path}: {exc}") from exc
+        if not isinstance(data, dict):
+            raise ConfigError(
+                f"Invalid config at {path}: expected a mapping at the top level."
+            )
+        try:
+            return cls(**data)
+        except TypeError as exc:
+            raise ConfigError(f"Invalid config at {path}: {exc}") from exc
 
     def to_dict(self) -> dict[str, Any]:
         return {

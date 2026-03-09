@@ -4,7 +4,6 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from docgarden.config import Config
 from docgarden.fixers import apply_safe_fixes
 from docgarden.scanner import scan_repo
 
@@ -75,7 +74,7 @@ Text.
 """,
         )
 
-        findings, domain_counts, _ = scan_repo(repo, Config.load(repo / ".docgarden" / "config.yaml"))
+        findings, domain_counts, _ = scan_repo(repo)
 
         self.assertEqual(findings, [])
         self.assertEqual(domain_counts["docs"], 1)
@@ -111,7 +110,7 @@ Text.
 """,
         )
 
-        findings, _, _ = scan_repo(repo, Config.load(repo / ".docgarden" / "config.yaml"))
+        findings, _, _ = scan_repo(repo)
         changed = apply_safe_fixes(repo, [item for item in findings if item.kind == "stale-review"])
 
         self.assertEqual(changed, ["docs/index.md"])
@@ -130,7 +129,7 @@ Text.
 """,
         )
 
-        findings, _, _ = scan_repo(repo, Config.load(repo / ".docgarden" / "config.yaml"))
+        findings, _, _ = scan_repo(repo)
         changed = apply_safe_fixes(repo, [item for item in findings if item.kind == "missing-sections"])
         content = (repo / "docs" / "index.md").read_text()
 
