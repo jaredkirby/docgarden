@@ -95,6 +95,8 @@ spec sections to PR-sized implementation units.
 - 2026-03-09: Kept imported review findings distinct from mechanical scan observations by tagging their source in state and preventing later scans from auto-resolving them when they are absent from mechanical detector output.
 - 2026-03-09: Tightened S10 after review so clean `findings: []` review imports now persist successfully, preserving review provenance even when no subjective findings are created.
 - 2026-03-09: Narrowed the review-packet operator contract to review-ready docs and surfaced skipped docs with missing packet metadata directly in `review prepare` output and packet scope state.
+- 2026-03-09: Implemented S11 safe autofix expansion so `docgarden fix safe` now previews and applies deterministic metadata skeletons, unambiguous broken-link repairs, and index or AGENTS route replacements when the target is uniquely resolvable.
+- 2026-03-09: Kept S11 bounded to mechanical edits by requiring scanner-produced replacement details up front and leaving ambiguous links, multi-candidate route replacements, and prose-level truth changes outside the safe-fix path.
 
 ## Discoveries
 
@@ -186,6 +188,12 @@ spec sections to PR-sized implementation units.
 - Review packet scope is clearest when it says "review-ready docs" and
   explicitly lists skipped files that still need metadata cleanup before they
   can join a packet.
+- Safe autofix stays trustworthy when the scanner computes replacement details
+  first and the fixer only applies that explicit plan; otherwise "preview" and
+  "`--apply`" can drift into separate behaviors.
+- Metadata skeleton insertion needs obviously provisional values such as
+  `owner: TODO` and `status: draft`; using factual-looking defaults for review
+  dates or owners would make the docs appear more verified than they are.
 
 ## Decision Log
 
@@ -250,7 +258,10 @@ spec sections to PR-sized implementation units.
 - 2026-03-09: Persist imported findings inside `findings.jsonl` with
   `finding_source: subjective_review` and provenance metadata so queue commands
   can act on them without letting future mechanical scans auto-resolve them.
+- 2026-03-09: Model S11 autofix eligibility as finding-level deterministic
+  details carried from scan time into preview and apply time, rather than
+  letting the fixer infer replacements on its own from file contents.
 
 ## Outcomes / Retrospective
 
-S10 is now implemented and verified with repo tests plus `docgarden scan`.
+S11 is now implemented and verified with repo tests plus `docgarden scan`.

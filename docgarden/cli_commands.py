@@ -11,7 +11,7 @@ from pathlib import Path
 
 from .config import Config
 from .errors import DocgardenError
-from .fixers import apply_safe_fixes
+from .fixers import apply_safe_fixes, preview_safe_fixes
 from .models import RepoPaths
 from .quality import write_quality_score
 from .scan_workflow import run_changed_scan, run_scan
@@ -289,7 +289,15 @@ def command_fix_safe(args: argparse.Namespace) -> None:
     findings = run_scan(paths).findings
     fixable = [item for item in findings if item.safe_to_autofix]
     if not args.apply:
-        print(json.dumps({"fixable": [item.id for item in fixable]}, indent=2))
+        print(
+            json.dumps(
+                {
+                    "fixable": [item.id for item in fixable],
+                    "planned_changes": preview_safe_fixes(Path.cwd(), fixable),
+                },
+                indent=2,
+            )
+        )
         return
     changed = apply_safe_fixes(Path.cwd(), fixable)
     result = run_scan(paths) if changed else None

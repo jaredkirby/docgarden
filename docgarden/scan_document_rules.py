@@ -101,9 +101,11 @@ def missing_metadata_finding(
     document: Document,
     *,
     missing_metadata: list[str],
+    metadata_updates: dict[str, object] | None,
     discovered_at: str,
 ) -> Finding:
     context = document_context(document, discovered_at=discovered_at)
+    safe_to_autofix = bool(metadata_updates)
     return Finding.open_issue(
         context,
         kind="missing-metadata",
@@ -111,10 +113,13 @@ def missing_metadata_finding(
         summary=f"{document.rel_path} is missing required metadata fields.",
         evidence=[f"Missing fields: {', '.join(missing_metadata)}"],
         recommended_action="Fill in the required frontmatter fields.",
-        safe_to_autofix=False,
+        safe_to_autofix=safe_to_autofix,
         cluster="metadata-gaps",
         suffix="metadata",
-        details={"missing_metadata": missing_metadata},
+        details={
+            "missing_metadata": missing_metadata,
+            "metadata_updates": metadata_updates or {},
+        },
     )
 
 
@@ -209,19 +214,29 @@ def broken_link_finding(
     document: Document,
     *,
     link: str,
+    replacement_link: str | None,
     discovered_at: str,
 ) -> Finding:
     context = document_context(document, discovered_at=discovered_at)
+    evidence = [f"Broken link target: {link}"]
+    recommended_action = "Update or remove the broken link."
+    if replacement_link is not None:
+        evidence.append(f"Deterministic replacement: {replacement_link}")
+        recommended_action = f"Update the link to {replacement_link}."
     return Finding.open_issue(
         context,
         kind="broken-link",
         severity="medium",
         summary=f"{document.rel_path} links to a missing file.",
-        evidence=[f"Broken link target: {link}"],
-        recommended_action="Update or remove the broken link.",
-        safe_to_autofix=False,
+        evidence=evidence,
+        recommended_action=recommended_action,
+        safe_to_autofix=replacement_link is not None,
         cluster="routing-drift",
         suffix=f"link-{abs(hash(link))}",
+        details={
+            "broken_link": link,
+            "replacement_link": replacement_link,
+        },
     )
 
 

@@ -4,6 +4,7 @@ from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 from pathlib import Path
+import re
 import subprocess
 
 from .errors import DocgardenError
@@ -23,6 +24,7 @@ from .scan_document_rules import (
     verified_without_sources_finding,
 )
 from .scan_alignment import alignment_findings
+from .scan_alignment import deterministic_internal_reference_replacement
 from .scan_linkage import (
     append_inbound_link,
     broken_route_findings,
@@ -250,10 +252,15 @@ def _metadata_findings(document: Document, *, discovered_at: str) -> list[Findin
     findings: list[Finding] = []
     missing_metadata = sorted(REQUIRED_METADATA - set(document.frontmatter))
     if missing_metadata:
+        metadata_updates = _metadata_skeleton_updates(
+            document,
+            missing_metadata=missing_metadata,
+        )
         findings.append(
             missing_metadata_finding(
                 document,
                 missing_metadata=missing_metadata,
+                metadata_updates=metadata_updates,
                 discovered_at=discovered_at,
             )
         )
@@ -352,14 +359,82 @@ def _link_findings(
         if target.exists():
             append_inbound_link(repo_root, target, document.rel_path, inbound_links)
             continue
+        replacement_link = deterministic_internal_reference_replacement(
+            repo_root,
+            current_file=document.path,
+            original_reference=link,
+        )
         findings.append(
             broken_link_finding(
                 document,
                 link=link,
+                replacement_link=replacement_link,
                 discovered_at=discovered_at,
             )
         )
     return findings
+
+
+def _default_doc_id(rel_path: str) -> str:
+    parts = list(Path(rel_path).with_suffix("").parts)
+    if parts[:1] == ["docs"] and len(parts) > 2:
+        parts = parts[1:]
+    slug = "-".join(parts).lower()
+    return re.sub(r"[^a-z0-9-]+", "-", slug).strip("-") or "doc"
+
+
+def _default_domain(rel_path: str) -> str:
+    path = Path(rel_path)
+    if path.parts[:1] != ("docs",):
+        return "docs"
+    if len(path.parts) < 3:
+        return "docs"
+    return path.parts[1]
+
+
+def _inferred_doc_type(rel_path: str) -> str:
+    path = Path(rel_path)
+    if path.parts[:3] == ("docs", "exec-plans", "active"):
+        return "exec-plan"
+    if path.parts[:2] == ("docs", "exec-plans"):
+        return "exec-plan"
+    if path.parts[:2] == ("docs", "generated"):
+        return "generated"
+    if path.parts[:2] == ("docs", "archive"):
+        return "archive"
+    if path.name == "index.md":
+        return "canonical"
+    return "reference"
+
+
+def _metadata_skeleton_updates(
+    document: Document,
+    *,
+    missing_metadata: list[str],
+) -> dict[str, object] | None:
+    if Path(document.rel_path).parts[:1] != ("docs",):
+        return None
+
+    inferred_doc_type = _inferred_doc_type(document.rel_path)
+    updates: dict[str, object] = {}
+    for field in missing_metadata:
+        if field == "doc_id":
+            updates[field] = _default_doc_id(document.rel_path)
+        elif field == "doc_type":
+            updates[field] = inferred_doc_type
+        elif field == "domain":
+            updates[field] = _default_domain(document.rel_path)
+        elif field == "owner":
+            updates[field] = "TODO"
+        elif field == "status":
+            updates[field] = "archived" if inferred_doc_type == "archive" else "draft"
+        elif field == "last_reviewed":
+            updates[field] = "TODO"
+        elif field == "review_cycle_days":
+            updates[field] = 30
+        else:
+            return None
+    return updates
 
 
 def _scan_document(
@@ -493,6 +568,7 @@ def scan_repo(repo_root: Path) -> tuple[list[Finding], dict[str, int], list[Docu
             repo_root,
             routed_targets,
             inbound_links,
+            documents_by_rel_path={document.rel_path: document for document in documents},
             discovered_at=discovered_at,
         )
     )

@@ -318,6 +318,87 @@ Text.
         self.assertIn("## Scope", content)
         self.assertIn("## Validation / How to verify", content)
 
+    def test_safe_fix_adds_missing_metadata_skeletons(self) -> None:
+        repo = self.make_repo()
+        write(
+            repo / "docs" / "reference.md",
+            """---
+doc_type: reference
+---
+
+# Reference Doc
+""",
+        )
+
+        findings, _, _ = scan_repo(repo)
+        metadata_finding = next(item for item in findings if item.kind == "missing-metadata")
+
+        self.assertTrue(metadata_finding.safe_to_autofix)
+        self.assertEqual(
+            metadata_finding.details["metadata_updates"]["status"],
+            "draft",
+        )
+
+        changed = apply_safe_fixes(repo, [metadata_finding])
+        content = (repo / "docs" / "reference.md").read_text()
+
+        self.assertEqual(changed, ["docs/reference.md"])
+        self.assertIn("doc_id: docs-reference", content)
+        self.assertIn("domain: docs", content)
+        self.assertIn("owner: TODO", content)
+        self.assertIn("status: draft", content)
+        self.assertIn("last_reviewed: TODO", content)
+        self.assertIn("review_cycle_days: 30", content)
+
+    def test_safe_fix_repairs_unambiguous_internal_link(self) -> None:
+        repo = self.make_repo()
+        write_docs_index(repo, extra_body="\n- [Guide](guide.md)\n")
+        write_canonical_doc(
+            repo,
+            "docs/reference/guide.md",
+            doc_id="guide-doc",
+            title="Guide",
+        )
+
+        findings, _, _ = scan_repo(repo)
+        broken_link = next(item for item in findings if item.kind == "broken-link")
+
+        self.assertTrue(broken_link.safe_to_autofix)
+        self.assertEqual(
+            broken_link.details["replacement_link"],
+            "reference/guide.md",
+        )
+
+        changed = apply_safe_fixes(repo, [broken_link])
+
+        self.assertEqual(changed, ["docs/index.md"])
+        self.assertIn(
+            "[Guide](reference/guide.md)",
+            (repo / "docs" / "index.md").read_text(),
+        )
+
+    def test_safe_fix_skips_ambiguous_internal_link_replacement(self) -> None:
+        repo = self.make_repo()
+        write_docs_index(repo, extra_body="\n- [Guide](guide.md)\n")
+        write_canonical_doc(
+            repo,
+            "docs/a/guide.md",
+            doc_id="guide-a",
+            title="Guide A",
+        )
+        write_canonical_doc(
+            repo,
+            "docs/b/guide.md",
+            doc_id="guide-b",
+            title="Guide B",
+        )
+
+        findings, _, _ = scan_repo(repo)
+        broken_link = next(item for item in findings if item.kind == "broken-link")
+
+        self.assertFalse(broken_link.safe_to_autofix)
+        self.assertEqual(broken_link.details["replacement_link"], None)
+
     def test_scan_flags_missing_source_of_truth_artifact(self) -> None:
         repo = self.make_repo()
         write(
@@ -451,6 +532,39 @@ Text.
             findings[0].recommended_action,
             "Update the route to point at docs/current.md instead of "
             "docs/archive/legacy-plan.md.",
+        )
+
+    def test_safe_fix_updates_stale_route_with_canonical_replacement(self) -> None:
+        repo = self.make_repo()
+        write_docs_index(repo, extra_body="\n- [Legacy Plan](archive/legacy-plan.md)\n")
+        write_archive_doc(
+            repo,
+            "docs/archive/legacy-plan.md",
+            doc_id="legacy-plan",
+            title="Legacy Plan",
+        )
+        write_canonical_doc(
+            repo,
+            "docs/current.md",
+            doc_id="current-doc",
+            title="Current Doc",
+        )
+
+        findings, _, _ = scan_repo(repo)
+        stale_route = next(item for item in findings if item.kind == "stale-route")
+
+        self.assertTrue(stale_route.safe_to_autofix)
+        self.assertEqual(
+            stale_route.details["route_replacements"],
+            [{"from": "archive/legacy-plan.md", "to": "current.md"}],
+        )
+
+        changed = apply_safe_fixes(repo, [stale_route])
+
+        self.assertEqual(changed, ["docs/index.md"])
+        self.assertIn(
+            "[Legacy Plan](current.md)",
+            (repo / "docs" / "index.md").read_text(),
         )
 
     def test_scan_skips_stale_route_without_canonical_replacement(self) -> None:

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import os
 import re
 import shlex
 from dataclasses import dataclass
@@ -13,6 +14,7 @@ from .markdown import (
     extract_markdown_links,
     extract_sections,
     normalize_heading,
+    resolve_link_target,
     section_content_map,
 )
 from .models import Finding, FindingContext
@@ -256,6 +258,87 @@ def resolve_repo_artifact(repo_root: Path, value: str) -> Path | None:
     if path.name in ROOT_LOCAL_ARTIFACT_NAMES:
         return repo_root / path
     return None
+
+
+def repo_markdown_documents(repo_root: Path) -> list[Path]:
+    documents: list[Path] = []
+    agents = repo_root / "AGENTS.md"
+    if agents.exists():
+        documents.append(agents)
+    docs_root = repo_root / "docs"
+    if docs_root.exists():
+        documents.extend(sorted(docs_root.rglob("*.md")))
+    return documents
+
+
+def repo_relative_target(repo_root: Path, target: Path) -> str | None:
+    try:
+        return str(target.relative_to(repo_root))
+    except ValueError:
+        return None
+
+
+def format_reference_for_source(
+    current_file: Path,
+    *,
+    repo_root: Path,
+    target: Path,
+    original_reference: str,
+) -> str:
+    clean_reference, hash_separator, anchor = original_reference.partition("#")
+    if clean_reference.startswith("docs/") or clean_reference == "AGENTS.md":
+        replacement = repo_relative_target(repo_root, target)
+        if replacement is None:
+            return original_reference
+    else:
+        replacement = Path(
+            os.path.relpath(target, start=current_file.parent)
+        ).as_posix()
+    if hash_separator:
+        replacement += f"#{anchor}"
+    return replacement
+
+
+def deterministic_repo_target_replacement(
+    repo_root: Path,
+    missing_target: str,
+) -> str | None:
+    candidate = Path(missing_target)
+    file_name = candidate.name
+    if not file_name:
+        return None
+    matches = [
+        path
+        for path in repo_markdown_documents(repo_root)
+        if path.name == file_name
+    ]
+    if len(matches) != 1:
+        return None
+    return repo_relative_target(repo_root, matches[0])
+
+
+def deterministic_internal_reference_replacement(
+    repo_root: Path,
+    *,
+    current_file: Path,
+    original_reference: str,
+) -> str | None:
+    target = resolve_link_target(current_file, repo_root, original_reference)
+    if target is None or target.exists():
+        return None
+    replacement_target = deterministic_repo_target_replacement(
+        repo_root,
+        repo_relative_target(repo_root, target) or target.name,
+    )
+    if replacement_target is None:
+        return None
+    replacement_path = repo_root / replacement_target
+    return format_reference_for_source(
+        current_file,
+        repo_root=repo_root,
+        target=replacement_path,
+        original_reference=original_reference,
+    )
 
 
 def extract_validation_commands(body: str) -> list[str]:

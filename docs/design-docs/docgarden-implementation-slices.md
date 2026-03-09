@@ -75,7 +75,7 @@ criteria rather than re-explaining the whole product vision.
 | S08 | completed | Routing quality detector for stale targets | S01 |
 | S09 | completed | Score trend and weighted domain rollups | S02 |
 | S10 | completed | Review packet preparation and import | S02, S03 |
-| S11 | queued | Safe autofix expansion | S07, S08 |
+| S11 | completed | Safe autofix expansion | S07, S08 |
 | S12 | queued | CI enforcement and scheduled automation | S03, S09, S11 |
 | S13 | blocked | Draft PR / issue automation | S12 |
 | S14 | blocked | Promotion suggestions from transient docs | S10 |
@@ -87,7 +87,8 @@ The repo has already shipped the Phase 1 core:
 - metadata, section, stale-review, link, route, orphan, and trust checks
 - persistent findings, plan, score, and run summaries
 - score publication to `docs/QUALITY_SCORE.md`
-- narrow safe autofix for stale status and missing headings
+- deterministic safe autofix for stale status, missing headings, metadata
+  skeletons, and unambiguous internal link or route repairs
 
 The repo has also completed the first six generic Phase 2 slices:
 
@@ -373,7 +374,7 @@ Acceptance:
 
 ### S11: Safe autofix expansion
 
-Status: `queued`
+Status: `completed`
 
 Goal:
 - Expand the safe-fix path to cover clearly mechanical doc repairs.

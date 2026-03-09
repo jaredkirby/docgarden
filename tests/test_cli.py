@@ -361,6 +361,14 @@ Text.
     assert main(["fix", "safe"]) == 0
     preview_payload = json.loads(capsys.readouterr().out)
     assert next_payload["id"] in preview_payload["fixable"]
+    assert preview_payload["planned_changes"] == [
+        {
+            "changes": ["Set `status` to `needs-review`."],
+            "files": ["docs/stale.md"],
+            "id": next_payload["id"],
+            "kind": "stale-review",
+        }
+    ]
 
     assert main(["fix", "safe", "--apply"]) == 0
     applied_payload = json.loads(capsys.readouterr().out)

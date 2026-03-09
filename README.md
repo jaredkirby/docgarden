@@ -2,8 +2,8 @@
 
 `docgarden` is a repo-local maintenance harness for agent-facing documentation.
 It scans for stale or malformed docs, writes an honest quality score, persists
-findings, supports queue-based triage and resolution, and offers a narrow
-safe-fix path for mechanical hygiene issues.
+findings, supports queue-based triage and resolution, and offers a
+deterministic safe-fix path for low-risk mechanical hygiene issues.
 
 ## Commands
 
@@ -87,6 +87,11 @@ declared domain are listed in the command output and packet scope metadata.
 `docgarden review import` accepts a structured JSON payload that references one
 of those packet IDs, stores the imported review under `.docgarden/reviews/`,
 and appends subjective findings with provenance into `findings.jsonl`.
+
+`docgarden fix safe` previews the exact low-risk edits it would make. Adding
+`--apply` limits mutations to deterministic repairs such as stale-status
+updates, missing required headings, metadata skeleton insertion, and
+unambiguous internal link or current-truth route replacements.
 
 Clean review passes are valid imports too. A no-findings payload can look like:
 
@@ -304,8 +309,10 @@ The repo currently includes:
 - plan triage stages with persisted notes
 - manual queue focus, resolve, and reopen commands
 - read-only changed-scope scans for partial local or CI feedback
+- deterministic safe autofix previews plus low-risk apply support for metadata,
+  headings, stale status, and unambiguous link or route repairs
 - automated slice kickoff and review prompt generation from the slice backlog
 - a Codex worker/reviewer loop that can continue until a slice is accepted or
   blocked
 
-Next planned slice: safe autofix expansion.
+Next planned slice: CI enforcement and scheduled automation.

@@ -5,7 +5,11 @@ from pathlib import Path
 
 from .markdown import Document, resolve_link_target
 from .models import Finding, FindingContext
-from .scan_alignment import stable_suffix
+from .scan_alignment import (
+    deterministic_repo_target_replacement,
+    format_reference_for_source,
+    stable_suffix,
+)
 from .scan_document_rules import document_domain
 
 
@@ -117,6 +121,7 @@ def broken_route_findings(
     routed_targets: defaultdict[str, set[str]],
     inbound_links: defaultdict[str, set[str]],
     *,
+    documents_by_rel_path: dict[str, Document],
     discovered_at: str,
 ) -> list[Finding]:
     findings: list[Finding] = []
@@ -130,6 +135,25 @@ def broken_route_findings(
             continue
 
         source = sorted(referrers)[0]
+        source_document = documents_by_rel_path.get(source)
+        replacement_target = deterministic_repo_target_replacement(repo_root, target)
+        route_replacements = (
+            route_reference_replacements(
+                source_document,
+                repo_root=repo_root,
+                target_rel_path=target,
+                replacement_rel_path=replacement_target,
+            )
+            if source_document is not None and replacement_target is not None
+            else []
+        )
+        evidence = [f"Missing route target: {target}"]
+        recommended_action = "Update the route to point at an existing canonical doc."
+        if replacement_target is not None:
+            evidence.append(f"Deterministic replacement: {replacement_target}")
+            recommended_action = (
+                f"Update the route to point at {replacement_target} instead."
+            )
         context = FindingContext(
             rel_path=source,
             domain="docs",
@@ -141,11 +165,16 @@ def broken_route_findings(
                 kind="broken-route",
                 severity="high" if source == "AGENTS.md" else "medium",
                 summary=f"{source} routes to a missing file.",
-                evidence=[f"Missing route target: {target}"],
-                recommended_action="Update the route to point at an existing canonical doc.",
-                safe_to_autofix=False,
+                evidence=evidence,
+                recommended_action=recommended_action,
+                safe_to_autofix=bool(route_replacements),
                 cluster="routing-drift",
                 suffix=f"route-{abs(hash(target))}",
+                details={
+                    "original_target": target,
+                    "replacement_target": replacement_target,
+                    "route_replacements": route_replacements,
+                },
             )
         )
     return findings
@@ -243,6 +272,16 @@ def route_quality_findings(
                 if replacements
                 else "Replace the route with a current canonical doc or remove it from the current-truth index."
             )
+            route_replacements = (
+                route_reference_replacements(
+                    source_document,
+                    repo_root=repo_root,
+                    target_rel_path=target_document.rel_path,
+                    replacement_rel_path=replacements[0],
+                )
+                if len(replacements) == 1
+                else []
+            )
             context = FindingContext(
                 rel_path=source,
                 domain="docs",
@@ -259,11 +298,16 @@ def route_quality_findings(
                     ),
                     evidence=evidence,
                     recommended_action=recommended_action,
-                    safe_to_autofix=False,
+                    safe_to_autofix=bool(route_replacements),
                     cluster="routing-drift",
                     suffix=stable_suffix(
                         "route-quality", f"{source}->{target_document.rel_path}"
                     ),
+                    details={
+                        "original_target": target_document.rel_path,
+                        "replacement_target": replacements[0] if len(replacements) == 1 else None,
+                        "route_replacements": route_replacements,
+                    },
                 )
             )
 
@@ -304,3 +348,50 @@ def orphan_doc_findings(
             )
         )
     return findings
+
+
+def route_reference_replacements(
+    document: Document,
+    *,
+    repo_root: Path,
+    target_rel_path: str,
+    replacement_rel_path: str | None,
+) -> list[dict[str, str]]:
+    if replacement_rel_path is None:
+        return []
+
+    replacement_path = repo_root / replacement_rel_path
+    replacements: list[dict[str, str]] = []
+
+    for link in document.links:
+        target = resolve_link_target(document.path, repo_root, link)
+        if target is None:
+            continue
+        if repo_relative_path(repo_root, target) != target_rel_path:
+            continue
+        replacements.append(
+            {
+                "from": link,
+                "to": format_reference_for_source(
+                    document.path,
+                    repo_root=repo_root,
+                    target=replacement_path,
+                    original_reference=link,
+                ),
+            }
+        )
+
+    for routed_path in document.routed_paths:
+        if routed_path != target_rel_path:
+            continue
+        replacements.append({"from": routed_path, "to": replacement_rel_path})
+
+    deduped: list[dict[str, str]] = []
+    seen: set[tuple[str, str]] = set()
+    for item in replacements:
+        key = (item["from"], item["to"])
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(item)
+    return deduped
