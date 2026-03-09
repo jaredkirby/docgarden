@@ -69,6 +69,7 @@ spec sections to PR-sized implementation units.
 - 2026-03-09: Kept manual queue actions split cleanly between `plan.json` focus changes and append-only finding status events in `findings.jsonl`.
 - 2026-03-09: Added tests covering direct-id focus, cluster focus, append-only resolution events, attestation enforcement, and reopen behavior.
 - 2026-03-09: Tightened S04 after review so `plan resolve` only operates on currently actionable queue items, and added clearer CLI help for repetitive operator flows.
+- 2026-03-09: Re-reviewed S04 against the slice backlog and prompt pack, then advanced the durable agent prompts so the next implementation kickoff targets S05 instead of already-shipped queue work.
 
 ## Discoveries
 
@@ -94,6 +95,9 @@ spec sections to PR-sized implementation units.
 - Queue commands need to stay queue-scoped; once a finding is already resolved,
   further status edits should go through a reopen step rather than another
   resolve action.
+- Prompt packs drift behind implementation unless they are updated as part of
+  slice review, so the review step should explicitly promote the next kickoff
+  to the next queued slice.
 
 ## Decision Log
 

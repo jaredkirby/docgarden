@@ -50,13 +50,13 @@ implementation work from spec-conformance review work.
 - `completed slice review`: a review pass against a slice that is already
   believed to be shipped.
 - `next agent`: the implementation agent starting the next queued slice after
-  S03.
+  S04.
 
 ## Prompt pack
 
-### 1. Implementation kickoff for the next agent after S03
+### 1. Implementation kickoff for the next agent after S04
 
-Use this when S01, S02, and S03 have already been completed, reviewed, and
+Use this when S01, S02, S03, and S04 have already been completed, reviewed, and
 accepted as the current baseline.
 
 ```text
@@ -67,30 +67,31 @@ Start by reading:
 - docs/design-docs/docgarden-spec.md
 - docs/exec-plans/active/2026-03-09-docgarden-spec-slicing.md
 
-Your target slice is S04: “Focus and resolve queue operations”.
+Your target slice is S05: “Changed-scope scans”.
 
 Primary goal:
-- make the queue actionable instead of read-only while preserving append-only
-  findings history
+- support faster local and CI feedback by scanning only changed files when that
+  is safe
 
 Required changes:
-1. Add `docgarden plan focus <cluster-or-id>`.
-2. Add `docgarden plan resolve <finding-id> --result ... --attest ...`.
-3. If it is low-risk and coherent, add reopen support for mistaken resolutions.
-4. Update plan state so `current_focus` changes predictably.
-5. Write new finding status events instead of mutating old history.
-6. Enforce attestation for non-trivial outcomes.
+1. Add `docgarden scan --scope changed`.
+2. Determine changed docs from local git state or a provided file list.
+3. Keep full-scan behavior unchanged.
+4. Make partial-scan output explicit about what was and was not recomputed.
+5. Preserve honest score semantics even if partial scans cannot fully recompute
+   every view.
 
 Likely files:
 - docgarden/cli.py
 - docgarden/cli_commands.py
-- docgarden/state.py
-- docgarden/models.py
+- docgarden/scanner.py
+- docgarden/quality.py
 - tests/test_cli.py
-- tests/test_support_modules.py
+- tests/test_docgarden.py
 
 Working style:
-- keep this slice tight; do not jump ahead into S05 changed-scope scans
+- keep this slice tight; do not jump ahead into S06 generated-doc contract
+  checks
 - do not revert unrelated user changes
 - if the current worktree contains unrelated dirty files, work around them
   carefully and commit only your touched paths
@@ -104,9 +105,9 @@ Documentation:
   discoveries, and decision log
 
 Definition of done:
-- focus updates `current_focus` predictably
-- resolve writes append-only status events
-- non-trivial results require attestation text
+- changed-scope scan inspects only the intended subset
+- full scan behavior remains unchanged
+- partial-scan output clearly explains score or coverage limitations
 - tests cover success paths and validation failures
 - repo scan remains clean after the change
 
@@ -267,9 +268,9 @@ Do not require focus/resolve behavior unless the lack of it prevents S03 from
 being useful on its own.
 ```
 
-### 5. PM review prompt for the next agent’s work against S04
+### 5. PM review prompt for the completed S04 work
 
-Use this after the next implementation agent finishes S04.
+Use this when you want a product/spec review of the shipped S04 queue slice.
 
 ```text
 Act as a PM-style reviewer for the docgarden spec implementation in
@@ -316,6 +317,54 @@ Deliverable:
 
 Do not require changed-scope scanning or review-packet behavior unless their
 absence prevents S04 from being useful on its own.
+```
+
+### 6. PM review prompt for the next agent’s work against S05
+
+Use this after the next implementation agent finishes S05.
+
+```text
+Act as a PM-style reviewer for the docgarden spec implementation in
+/Users/kirby/Projects/docgarden.
+
+You are reviewing the implementation of S05: “Changed-scope scans”.
+
+Read first:
+- docs/design-docs/docgarden-spec.md
+- docs/design-docs/docgarden-implementation-slices.md
+- docs/exec-plans/active/2026-03-09-docgarden-spec-slicing.md
+
+Review the implementation specifically against the S05 slice definition.
+
+Questions to answer:
+1. Does `docgarden scan --scope changed` actually limit work to the intended
+   changed subset?
+2. Is the changed-set derivation understandable and predictable?
+   - from git state
+   - from an explicit file list, if supported
+3. Does the implementation preserve honest score semantics for partial scans?
+4. Is full-scan behavior unchanged and still the source of truth for complete
+   repo health?
+5. Did the implementation stay within S05, or did it sprawl into generated-doc
+   rules, workflow drift detection, or CI policy?
+6. Are the operator-facing messages clear about what partial scans can and
+   cannot guarantee?
+
+Deliverable:
+- findings first, ordered by severity
+- classify each issue as:
+  - spec mismatch
+  - product ambiguity
+  - implementation risk
+  - testing/documentation gap
+- explicitly call out any hidden product decisions not stated in the slice
+- end with a short recommendation:
+  - ready for S06
+  - revise before S06
+  - blocked pending product clarification
+
+Do not require generated-doc or workflow-drift behavior unless their absence
+prevents S05 from being useful on its own.
 ```
 
 ## Exceptions / Caveats
