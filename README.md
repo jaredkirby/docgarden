@@ -24,6 +24,7 @@ docgarden slices next
 docgarden slices kickoff-prompt
 docgarden slices review-prompt --worker-output .docgarden/slice-loops/.../worker-round-1.output.json
 docgarden slices run --max-slices 1
+docgarden slices run --max-slices 1 --agent-timeout-seconds 300
 docgarden show FINDING_ID
 docgarden quality write
 docgarden fix safe --apply
@@ -107,8 +108,19 @@ Use `docgarden slices run --max-slices 0` to keep advancing until no queued
 slices remain. The safer default is `--max-slices 1`, which automates one slice
 at a time.
 
+Each worker or reviewer `codex exec` call now has a 300-second timeout by
+default. Use `--agent-timeout-seconds 0` to disable that guardrail. When a
+Codex run times out or exits nonzero, `docgarden` still writes whatever
+stdout/stderr it captured to the current `.docgarden/slice-loops/...` run
+directory before failing, so operators have something concrete to inspect.
+Nested runs also strip parent `CODEX_*` session-control environment variables
+before spawning worker or reviewer agents, so running the loop from inside an
+existing Codex session does not leak the parent sandbox/thread state into the
+child process.
+
 For other repos, the `slices` CLI also accepts path overrides such as
-`--catalog-path`, `--spec-path`, `--plan-path`, and `--artifacts-dir`.
+`--catalog-path`, `--spec-path`, `--plan-path`, `--artifacts-dir`, and
+`--agent-timeout-seconds`.
 
 There is also a repo-owned operator skill at
 `.agents/skills/docgarden-slice-orchestrator/SKILL.md` for agents that need to

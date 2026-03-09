@@ -237,6 +237,15 @@ def build_parser() -> argparse.ArgumentParser:
         help="Maximum worker/reviewer revision rounds per slice.",
     )
     slices_run.add_argument(
+        "--agent-timeout-seconds",
+        type=int,
+        default=300,
+        help=(
+            "Maximum runtime for each worker or reviewer Codex run. "
+            "Use 0 to disable the timeout."
+        ),
+    )
+    slices_run.add_argument(
         "--codex-bin",
         default="codex",
         help="Codex CLI binary to invoke for worker and reviewer runs.",

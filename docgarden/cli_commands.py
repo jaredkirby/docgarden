@@ -352,6 +352,10 @@ def command_slices_run(args: argparse.Namespace) -> int:
         raise DocgardenError(
             "`docgarden slices run --max-review-rounds` must be at least 1."
         )
+    if args.agent_timeout_seconds < 0:
+        raise DocgardenError(
+            "`docgarden slices run --agent-timeout-seconds` must be 0 or greater."
+        )
 
     slice_paths = _slice_paths_from_args(Path.cwd(), args)
     summary = run_slice_loop(
@@ -360,6 +364,9 @@ def command_slices_run(args: argparse.Namespace) -> int:
         start_slice=args.from_slice,
         max_slices=args.max_slices,
         max_review_rounds=args.max_review_rounds,
+        agent_timeout_seconds=(
+            None if args.agent_timeout_seconds == 0 else args.agent_timeout_seconds
+        ),
         codex_bin=args.codex_bin,
         model=args.model,
         codex_args=args.codex_arg or [],

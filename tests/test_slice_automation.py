@@ -332,7 +332,13 @@ def test_cli_slices_run_revises_then_advances_to_next_slice(
         ]
     )
 
-    def fake_run(cmd, cwd, input, text, capture_output, check):
+    def fake_run(cmd, cwd, input, text, capture_output, check, timeout, env):
+        assert timeout == 300
+        assert env is not None
+        assert "CODEX_CI" not in env
+        assert "CODEX_SANDBOX" not in env
+        assert "CODEX_SANDBOX_NETWORK_DISABLED" not in env
+        assert "CODEX_THREAD_ID" not in env
         output_path = Path(cmd[cmd.index("--output-last-message") + 1])
         payload = next(responses)
         output_path.write_text(json.dumps(payload), encoding="utf-8")
@@ -359,3 +365,63 @@ def test_cli_slices_run_revises_then_advances_to_next_slice(
     assert (first_run / "review-round-1.output.json").exists()
     assert (first_run / "worker-round-2.output.json").exists()
     assert (first_run / "review-round-2.output.json").exists()
+
+
+def test_cli_slices_run_times_out_and_persists_partial_logs(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    repo = make_slice_repo(tmp_path)
+    monkeypatch.chdir(repo)
+
+    def fake_run(cmd, cwd, input, text, capture_output, check, timeout, env):
+        assert env is not None
+        raise subprocess.TimeoutExpired(
+            cmd=cmd,
+            timeout=timeout,
+            output="partial stdout\n",
+            stderr="partial stderr\n",
+        )
+
+    monkeypatch.setattr("docgarden.slices.runner.subprocess.run", fake_run)
+
+    assert main(["slices", "run", "--agent-timeout-seconds", "12"]) == 1
+    captured = capsys.readouterr()
+    assert "timed out for worker-round-1 after 12 seconds" in captured.err
+
+    run_dirs = sorted((repo / ".docgarden" / "slice-loops").iterdir())
+    assert len(run_dirs) == 1
+    run_dir = run_dirs[0]
+    assert (run_dir / "worker-round-1.stdout.txt").read_text(encoding="utf-8") == (
+        "partial stdout\n"
+    )
+    assert (run_dir / "worker-round-1.stderr.txt").read_text(encoding="utf-8") == (
+        "partial stderr\n"
+    )
+    assert not (run_dir / "worker-round-1.output.json").exists()
+
+
+def test_cli_slices_run_nonzero_exit_persists_logs(tmp_path, monkeypatch, capsys) -> None:
+    repo = make_slice_repo(tmp_path)
+    monkeypatch.chdir(repo)
+
+    def fake_run(cmd, cwd, input, text, capture_output, check, timeout, env):
+        assert timeout == 300
+        assert env is not None
+        return subprocess.CompletedProcess(cmd, 17, "agent stdout\n", "agent stderr\n")
+
+    monkeypatch.setattr("docgarden.slices.runner.subprocess.run", fake_run)
+
+    assert main(["slices", "run"]) == 1
+    captured = capsys.readouterr()
+    assert "exit code 17" in captured.err
+    assert "worker-round-1.stderr.txt" in captured.err
+
+    run_dirs = sorted((repo / ".docgarden" / "slice-loops").iterdir())
+    assert len(run_dirs) == 1
+    run_dir = run_dirs[0]
+    assert (run_dir / "worker-round-1.stdout.txt").read_text(encoding="utf-8") == (
+        "agent stdout\n"
+    )
+    assert (run_dir / "worker-round-1.stderr.txt").read_text(encoding="utf-8") == (
+        "agent stderr\n"
+    )

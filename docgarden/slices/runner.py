@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
 import json
+import os
 import subprocess
 from pathlib import Path
 from typing import Any
@@ -17,6 +18,14 @@ from .prompts import (
     build_implementation_prompt,
     build_review_prompt,
 )
+
+
+CODEX_ENV_DENYLIST = {
+    "CODEX_CI",
+    "CODEX_SANDBOX",
+    "CODEX_SANDBOX_NETWORK_DISABLED",
+    "CODEX_THREAD_ID",
+}
 
 
 @dataclass(slots=True)
@@ -48,6 +57,7 @@ def run_slice_loop(
     start_slice: str | None = None,
     max_slices: int = 1,
     max_review_rounds: int = 3,
+    agent_timeout_seconds: int | None = 300,
     codex_bin: str = "codex",
     model: str | None = None,
     codex_args: list[str] | None = None,
@@ -82,6 +92,7 @@ def run_slice_loop(
             slice_def=current,
             next_slice=next_slice,
             max_review_rounds=max_review_rounds,
+            agent_timeout_seconds=agent_timeout_seconds,
             codex_bin=codex_bin,
             model=model,
             codex_args=codex_args or [],
@@ -112,6 +123,7 @@ def _run_single_slice(
     slice_def: SliceDefinition,
     next_slice: SliceDefinition | None,
     max_review_rounds: int,
+    agent_timeout_seconds: int | None,
     codex_bin: str,
     model: str | None,
     codex_args: list[str],
@@ -144,6 +156,7 @@ def _run_single_slice(
             prompt=worker_prompt,
             schema=WORKER_OUTPUT_SCHEMA,
             prefix=f"worker-round-{round_number}",
+            timeout_seconds=agent_timeout_seconds,
         )
         worker_outputs.append(str(worker_run.output_path))
         previous_worker_output_path = worker_run.output_path
@@ -176,6 +189,7 @@ def _run_single_slice(
             prompt=review_prompt,
             schema=REVIEW_OUTPUT_SCHEMA,
             prefix=f"review-round-{round_number}",
+            timeout_seconds=agent_timeout_seconds,
         )
         review_outputs.append(str(review_run.output_path))
         prior_review_path = review_run.output_path
@@ -209,6 +223,7 @@ def _run_codex_agent(
     prompt: str,
     schema: dict[str, Any],
     prefix: str,
+    timeout_seconds: int | None,
 ) -> AgentRunArtifact:
     prompt_path = run_dir / f"{prefix}.prompt.txt"
     schema_path = run_dir / f"{prefix}.schema.json"
@@ -243,12 +258,27 @@ def _run_codex_agent(
             text=True,
             capture_output=True,
             check=False,
+            timeout=timeout_seconds,
+            env=_build_codex_subprocess_env(),
         )
     except FileNotFoundError as exc:
         raise DocgardenError(f"Could not find Codex CLI binary: {codex_bin}.") from exc
+    except subprocess.TimeoutExpired as exc:
+        _write_process_logs(stdout_path, stderr_path, stdout=exc.stdout, stderr=exc.stderr)
+        timeout_display = "the configured timeout"
+        if timeout_seconds is not None:
+            timeout_display = f"{timeout_seconds} seconds"
+        raise DocgardenError(
+            f"Codex agent run timed out for {prefix} after {timeout_display}. "
+            f"Partial logs were written to {stdout_path} and {stderr_path}."
+        ) from exc
 
-    atomic_write_text(stdout_path, completed.stdout)
-    atomic_write_text(stderr_path, completed.stderr)
+    _write_process_logs(
+        stdout_path,
+        stderr_path,
+        stdout=completed.stdout,
+        stderr=completed.stderr,
+    )
 
     if completed.returncode != 0:
         raise DocgardenError(
@@ -280,3 +310,31 @@ def _run_codex_agent(
         parsed_output=parsed_output,
         command=command,
     )
+
+
+def _write_process_logs(
+    stdout_path: Path,
+    stderr_path: Path,
+    *,
+    stdout: str | bytes | None,
+    stderr: str | bytes | None,
+) -> None:
+    atomic_write_text(stdout_path, _coerce_process_stream(stdout))
+    atomic_write_text(stderr_path, _coerce_process_stream(stderr))
+
+
+def _coerce_process_stream(value: str | bytes | None) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, bytes):
+        return value.decode("utf-8", errors="replace")
+    return value
+
+
+def _build_codex_subprocess_env() -> dict[str, str]:
+    env = os.environ.copy()
+    # Nested `codex exec` runs should not inherit the parent Codex session's
+    # sandbox/thread controls, or the child can start in an unusable state.
+    for key in CODEX_ENV_DENYLIST:
+        env.pop(key, None)
+    return env

@@ -70,6 +70,8 @@ inside `docgarden`.
 - 2026-03-09: Updated the README and plan routing so the new loop is discoverable from the normal repo entry points.
 - 2026-03-09: Repackaged the automation into a reusable `docgarden.slices` module and kept `docgarden.slice_automation` as a compatibility re-export.
 - 2026-03-09: Added configurable path resolution for the slice backlog, spec, exec plan, and artifact directory so other project repos can use the loop without copying this repo’s exact docs layout.
+- 2026-03-09: Added a default per-agent timeout for `docgarden slices run`, persisted partial stdout/stderr on timeout or nonzero exit, and covered those failure paths with regression tests after the first live run reproduced a stuck `codex exec` child process.
+- 2026-03-09: Sanitized parent `CODEX_*` session-control environment variables before spawning nested `codex exec` worker/reviewer runs, which let the first live temp-repo verification progress into real file reads and tool use instead of stalling before structured output.
 
 ## Discoveries
 
@@ -78,6 +80,9 @@ inside `docgarden`.
 - The loop still benefits from durable human-readable artifacts, so prompt text, JSON schemas, structured outputs, and stdout/stderr logs should all be kept under `.docgarden/slice-loops/`.
 - Advancing to the next slice should not depend on docs being updated in the middle of the same run; the command can progress through the ordered slice catalog it parsed at startup.
 - Reuse depends more on configurable document paths than on the prompt text itself; the hardcoded repo-doc locations were the main thing preventing clean adoption in other repos.
+- The first live exercise surfaced a gap that mocked tests missed: if `codex exec` panics or stalls after launch, a plain `subprocess.run(...)` without a timeout can hang the whole orchestration loop indefinitely.
+- Operators still need logs when an agent launch goes bad, so stdout/stderr persistence cannot wait until a successful subprocess return; timeout and error paths need to flush partial streams too.
+- Running `docgarden slices run` from inside an existing Codex session adds another failure mode: the spawned child inherits parent `CODEX_*` sandbox/thread environment variables unless the runner strips them explicitly.
 
 ## Decision Log
 
@@ -86,7 +91,13 @@ inside `docgarden`.
 - 2026-03-09: Keep the default run bounded to one slice at a time with `--max-slices 1`, while allowing `--max-slices 0` for continuous advancement.
 - 2026-03-09: Persist run artifacts inside `.docgarden/` because the automation loop is an operational stateful workflow, not just a transient convenience wrapper.
 - 2026-03-09: Keep the reusable Python API under `docgarden.slices` and reserve the top-level `docgarden.slice_automation` import as a backwards-compatible shim.
+- 2026-03-09: Add a default 300-second timeout per worker/reviewer `codex exec` invocation and allow `--agent-timeout-seconds 0` to disable it, so the loop fails fast instead of silently hanging behind a bad child process.
+- 2026-03-09: Persist partial stdout/stderr before raising timeout or nonzero-exit errors, so the artifact directory remains inspectable even when the agent process never produces structured JSON.
+- 2026-03-09: Strip inherited `CODEX_CI`, `CODEX_SANDBOX`, `CODEX_SANDBOX_NETWORK_DISABLED`, and `CODEX_THREAD_ID` from nested worker/reviewer launches, because those describe the parent Codex session rather than the child run we want `docgarden` to start.
 
 ## Outcomes / Retrospective
 
-Pending real-world use of the automated loop across future slices.
+The loop now survives the first real-world integration traps better: bad agent
+launches fail fast, preserve the captured logs operators need, and no longer
+inherit the parent Codex session’s sandbox/thread controls when spawning nested
+worker or reviewer runs.
