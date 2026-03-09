@@ -108,6 +108,8 @@ spec sections to PR-sized implementation units.
 - 2026-03-09: Implemented S14 promotion suggestions so repo-wide scans now detect repeated rule-like statements across exec plans and other transient note-style docs.
 - 2026-03-09: Kept S14 explainable by storing source file, section, normalized rule text, and candidate destination docs on each `promotion-suggestion` finding instead of emitting an opaque repetition score.
 - 2026-03-09: Added regression coverage for a positive repeated-rule case plus the generic-wording boundary so transient repetition has to look both directive and repo-specific before it reaches the queue.
+- 2026-03-09: Tightened S14 after review so promotion suggestions now nominate canonical destination docs first, with optional supporting reference docs and matched-keyword rationale preserved in the finding details.
+- 2026-03-09: Added explicit S14 regression coverage for repeated rules across note/workaround-style transient docs, not just exec plans, and documented the participating transient-doc classes in the README.
 
 ## Discoveries
 
@@ -233,6 +235,9 @@ spec sections to PR-sized implementation units.
   both a directive signal (`should`, `must`, `keep`, `treat`, etc.) and a
   repo-specific anchor such as `docgarden`, `docs/`, `AGENTS.md`, or durable
   state-file names before it suggests promotion.
+- Promotion suggestions are more actionable when they separate "primary
+  canonical destination" from supporting reference docs; otherwise the queue
+  can point straight back into another transient or non-authoritative document.
 
 ## Decision Log
 

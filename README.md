@@ -380,4 +380,10 @@ The repo currently includes:
 - a Codex worker/reviewer loop that can continue until a slice is accepted or
   blocked
 
+The promotion detector only scans transient docs: exec plans plus non-verified
+note, workaround, scratch, summary, or temporary docs inferred from their
+paths. It only fires on repeated directive, repo-specific wording, and each
+finding includes a primary canonical destination plus optional supporting
+reference docs with matched-keyword evidence.
+
 The current published slice backlog is fully implemented through S14.

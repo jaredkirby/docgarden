@@ -133,7 +133,40 @@ PROMOTION_STOPWORDS = {
     "use",
     "with",
 }
-PROMOTION_DESTINATION_HINTS = (
+CANONICAL_PROMOTION_DESTINATION_HINTS = (
+    (
+        "docs/design-docs/index.md",
+        (
+            "docgarden",
+            ".docgarden",
+            "findings.jsonl",
+            "plan.json",
+            "quality score",
+            "review packet",
+            "safe autofix",
+            "score.json",
+            "strict score",
+        ),
+    ),
+    (
+        "docs/index.md",
+        (
+            "agents.md",
+            "canonical",
+            "docs/index.md",
+            "source of truth",
+            "system of record",
+            "exec plan",
+            "exec plans",
+            "exec-plans",
+            "note",
+            "notes",
+            "workaround",
+            "workarounds",
+        ),
+    ),
+)
+SUPPORTING_PROMOTION_DESTINATION_HINTS = (
     (
         "docs/PLANS.md",
         (
@@ -144,16 +177,6 @@ PROMOTION_DESTINATION_HINTS = (
             "decision log",
             "discoveries",
             "active plans",
-        ),
-    ),
-    (
-        "docs/index.md",
-        (
-            "agents.md",
-            "canonical",
-            "docs/",
-            "source of truth",
-            "system of record",
         ),
     ),
     (
@@ -195,6 +218,12 @@ class PromotionOccurrence:
     section: str
     statement: str
     normalized_rule: str
+
+
+@dataclass(frozen=True, slots=True)
+class PromotionDestinationSuggestion:
+    rel_path: str
+    reasons: tuple[str, ...]
 
 
 def stable_suffix(prefix: str, value: str) -> str:
@@ -269,11 +298,20 @@ def promotion_suggestion_findings(
             unique_by_file[rel_path] for rel_path in sorted(unique_by_file)
         ]
         source_files = [item.rel_path for item in ordered_occurrences]
-        candidate_destinations = infer_promotion_destination_docs(
+        candidate_suggestions = infer_promotion_destination_docs(
+            normalized_rule,
+            source_files=source_files,
+            documents=documents,
+            repo_root=repo_root,
+        )
+        supporting_suggestions = infer_supporting_promotion_destination_docs(
             normalized_rule,
             source_files=source_files,
             repo_root=repo_root,
         )
+        candidate_destinations = [item.rel_path for item in candidate_suggestions]
+        supporting_destinations = [item.rel_path for item in supporting_suggestions]
+        primary_destination = candidate_destinations[0] if candidate_destinations else None
         summary_statement = ordered_occurrences[0].statement
         evidence = [
             (
@@ -285,21 +323,44 @@ def promotion_suggestion_findings(
             f"Source: {item.rel_path} [{item.section}]"
             for item in ordered_occurrences[:3]
         )
-        if candidate_destinations:
+        if primary_destination:
             evidence.append(
-                "Candidate destination docs: " + ", ".join(candidate_destinations)
+                "Primary canonical destination: "
+                + format_promotion_destination_suggestion(candidate_suggestions[0])
+            )
+        if len(candidate_suggestions) > 1:
+            evidence.append(
+                "Other canonical destinations: "
+                + ", ".join(
+                    format_promotion_destination_suggestion(item)
+                    for item in candidate_suggestions[1:]
+                )
+            )
+        if supporting_suggestions:
+            evidence.append(
+                "Supporting reference docs: "
+                + ", ".join(
+                    format_promotion_destination_suggestion(item)
+                    for item in supporting_suggestions
+                )
             )
 
         recommended_action = (
-            "Promote the repeated rule into a durable doc and replace the "
+            "Promote the repeated rule into a canonical doc and replace the "
             "transient copies with links or shorter reminders."
         )
-        if candidate_destinations:
+        if primary_destination:
             recommended_action = (
                 "Promote the repeated rule into "
-                + ", ".join(candidate_destinations)
+                + primary_destination
                 + ", then replace the transient copies with links or shorter reminders."
             )
+            if supporting_destinations:
+                recommended_action += (
+                    " Align supporting reference docs as needed: "
+                    + ", ".join(supporting_destinations)
+                    + "."
+                )
 
         context = FindingContext(
             rel_path=source_files[0],
@@ -313,7 +374,7 @@ def promotion_suggestion_findings(
                 kind="promotion-suggestion",
                 severity="low",
                 summary=(
-                    "Repeated transient rule should move into a durable doc: "
+                    "Repeated transient rule should move into a canonical doc: "
                     f"{summary_statement}"
                 ),
                 evidence=evidence,
@@ -323,7 +384,15 @@ def promotion_suggestion_findings(
                 suffix=stable_suffix("promotion", normalized_rule),
                 details={
                     "candidate_destinations": candidate_destinations,
+                    "primary_canonical_destination": primary_destination,
+                    "candidate_destination_reasons": {
+                        item.rel_path: list(item.reasons) for item in candidate_suggestions
+                    },
                     "normalized_rule": normalized_rule,
+                    "supporting_destination_docs": supporting_destinations,
+                    "supporting_destination_reasons": {
+                        item.rel_path: list(item.reasons) for item in supporting_suggestions
+                    },
                     "source_occurrences": [
                         {
                             "file": item.rel_path,
@@ -1007,22 +1076,126 @@ def normalize_promotion_rule(statement: str) -> str:
     return normalized.strip()
 
 
+def _destination_suggestions_from_hints(
+    hint_map: tuple[tuple[str, tuple[str, ...]], ...],
+    *,
+    normalized_rule: str,
+    source_files: list[str],
+    repo_root: Path,
+) -> list[PromotionDestinationSuggestion]:
+    lower_source_paths = " ".join(source_files).lower()
+    suggestions: list[tuple[int, str, tuple[str, ...]]] = []
+    for doc_path, hints in hint_map:
+        if not (repo_root / doc_path).exists():
+            continue
+        matched_hints = tuple(
+            hint for hint in hints if hint in normalized_rule or hint in lower_source_paths
+        )
+        if not matched_hints:
+            continue
+        suggestions.append((len(matched_hints), doc_path, matched_hints))
+
+    suggestions.sort(key=lambda item: (-item[0], item[1]))
+    return [
+        PromotionDestinationSuggestion(rel_path=doc_path, reasons=matched_hints)
+        for _, doc_path, matched_hints in suggestions[:3]
+    ]
+
+
+def _fallback_promotion_destination(
+    *,
+    documents: list[Document],
+    source_files: list[str],
+) -> list[PromotionDestinationSuggestion]:
+    canonical_paths = {
+        document.rel_path
+        for document in documents
+        if document.frontmatter.get("doc_type") == "canonical"
+    }
+    if not canonical_paths:
+        return []
+
+    if (
+        any(path.startswith("docs/exec-plans/") for path in source_files)
+        and "docs/design-docs/index.md" in canonical_paths
+    ):
+        return [
+            PromotionDestinationSuggestion(
+                rel_path="docs/design-docs/index.md",
+                reasons=(
+                    "fallback: exec-plan rules should promote through the design-docs canonical route",
+                ),
+            )
+        ]
+
+    if (
+        any(
+            keyword in path.lower()
+            for path in source_files
+            for keyword in TRANSIENT_DOC_PATH_KEYWORDS
+        )
+        and "docs/index.md" in canonical_paths
+    ):
+        return [
+            PromotionDestinationSuggestion(
+                rel_path="docs/index.md",
+                reasons=(
+                    "fallback: note and workaround docs should promote durable guidance through the docs index",
+                ),
+            )
+        ]
+
+    for rel_path in ("docs/index.md", "docs/design-docs/index.md"):
+        if rel_path in canonical_paths:
+            return [
+                PromotionDestinationSuggestion(
+                    rel_path=rel_path,
+                    reasons=("fallback: nearest canonical routing doc in this repo",),
+                )
+            ]
+
+    rel_path = sorted(canonical_paths)[0]
+    return [
+        PromotionDestinationSuggestion(
+            rel_path=rel_path,
+            reasons=("fallback: nearest canonical routing doc in this repo",),
+        )
+    ]
+
+
 def infer_promotion_destination_docs(
     normalized_rule: str,
     *,
     source_files: list[str],
+    documents: list[Document],
     repo_root: Path,
-) -> list[str]:
-    candidates: list[str] = []
-    lower_source_paths = " ".join(source_files).lower()
-    for doc_path, hints in PROMOTION_DESTINATION_HINTS:
-        if not (repo_root / doc_path).exists():
-            continue
-        if any(hint in normalized_rule or hint in lower_source_paths for hint in hints):
-            candidates.append(doc_path)
-    if not candidates:
-        for fallback in ("docs/PLANS.md", "docs/index.md", "README.md"):
-            if (repo_root / fallback).exists():
-                candidates.append(fallback)
-                break
-    return candidates[:3]
+) -> list[PromotionDestinationSuggestion]:
+    suggestions = _destination_suggestions_from_hints(
+        CANONICAL_PROMOTION_DESTINATION_HINTS,
+        normalized_rule=normalized_rule,
+        source_files=source_files,
+        repo_root=repo_root,
+    )
+    if suggestions:
+        return suggestions
+    return _fallback_promotion_destination(documents=documents, source_files=source_files)
+
+
+def infer_supporting_promotion_destination_docs(
+    normalized_rule: str,
+    *,
+    source_files: list[str],
+    repo_root: Path,
+) -> list[PromotionDestinationSuggestion]:
+    return _destination_suggestions_from_hints(
+        SUPPORTING_PROMOTION_DESTINATION_HINTS,
+        normalized_rule=normalized_rule,
+        source_files=source_files,
+        repo_root=repo_root,
+    )
+
+
+def format_promotion_destination_suggestion(
+    suggestion: PromotionDestinationSuggestion,
+) -> str:
+    return f"{suggestion.rel_path} (matched: {', '.join(suggestion.reasons)})"

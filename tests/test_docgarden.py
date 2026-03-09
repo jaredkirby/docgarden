@@ -1017,6 +1017,40 @@ Text.
         write_docs_index(repo)
         write(repo / "README.md", "# README\n")
         write(repo / "docs" / "PLANS.md", "# Plans\n")
+        write_canonical_doc(
+            repo,
+            "docs/design-docs/index.md",
+            doc_id="design-docs-index",
+            title="Design Docs Index",
+        )
+        write(
+            repo / "docs" / "design-docs" / "docgarden-spec.md",
+            REFERENCE_FRONTMATTER.replace("doc_id: reference-doc", "doc_id: docgarden-spec")
+            + """
+# Docgarden Spec
+
+## Purpose
+Text.
+
+## Scope
+Text.
+
+## Source of Truth
+Text.
+
+## Rules / Definitions
+Text.
+
+## Exceptions / Caveats
+Text.
+
+## Validation / How to verify
+Text.
+
+## Related docs
+Text.
+""",
+        )
         repeated_rule = (
             "- Full scans should remain the source of truth for "
             "`findings.jsonl` and `score.json`.\n"
@@ -1048,7 +1082,15 @@ Text.
         )
         self.assertEqual(
             promotion.details["candidate_destinations"],
-            ["docs/PLANS.md", "docs/index.md", "README.md"],
+            ["docs/design-docs/index.md", "docs/index.md"],
+        )
+        self.assertEqual(
+            promotion.details["primary_canonical_destination"],
+            "docs/design-docs/index.md",
+        )
+        self.assertEqual(
+            promotion.details["supporting_destination_docs"],
+            ["README.md", "docs/PLANS.md", "docs/design-docs/docgarden-spec.md"],
         )
         self.assertEqual(
             promotion.details["source_occurrences"],
@@ -1072,8 +1114,12 @@ Text.
             ],
         )
         self.assertIn(
-            "Candidate destination docs: docs/PLANS.md, docs/index.md, README.md",
-            promotion.evidence,
+            "Primary canonical destination: docs/design-docs/index.md",
+            " ".join(promotion.evidence),
+        )
+        self.assertIn(
+            "Supporting reference docs: README.md",
+            " ".join(promotion.evidence),
         )
 
     def test_scan_ignores_generic_repeated_exec_plan_wording(self) -> None:
@@ -1099,6 +1145,82 @@ Text.
 
         self.assertEqual(
             [item.kind for item in findings if item.kind == "promotion-suggestion"],
+            [],
+        )
+
+    def test_scan_flags_repeated_transient_note_rule_for_promotion(self) -> None:
+        repo = self.make_repo()
+        write_docs_index(repo)
+        write_canonical_doc(
+            repo,
+            "docs/design-docs/index.md",
+            doc_id="design-docs-index",
+            title="Design Docs Index",
+        )
+        repeated_rule = (
+            "- Workaround notes should point back to `docs/index.md` as the "
+            "source of truth for current repo guidance.\n"
+        )
+        transient_frontmatter = (
+            REFERENCE_FRONTMATTER.replace("doc_id: reference-doc", "doc_id: workaround-note")
+            .replace("status: verified", "status: draft")
+        )
+        note_body = """
+# Temporary Note
+
+## Purpose
+Text.
+
+## Scope
+Text.
+
+## Source of Truth
+Text.
+
+## Rules / Definitions
+{rule}
+
+## Exceptions / Caveats
+Text.
+
+## Validation / How to verify
+Text.
+
+## Related docs
+Text.
+"""
+        write(
+            repo / "docs" / "notes" / "temporary-guidance.md",
+            transient_frontmatter + note_body.format(rule=repeated_rule),
+        )
+        write(
+            repo / "docs" / "workarounds" / "cache-workaround.md",
+            transient_frontmatter.replace("workaround-note", "cache-workaround")
+            + note_body.replace("# Temporary Note", "# Cache Workaround").format(
+                rule=repeated_rule
+            ),
+        )
+
+        findings, _, _ = scan_repo(repo)
+
+        promotion = next(item for item in findings if item.kind == "promotion-suggestion")
+        self.assertEqual(
+            promotion.files,
+            [
+                "docs/notes/temporary-guidance.md",
+                "docs/workarounds/cache-workaround.md",
+            ],
+        )
+        self.assertEqual(
+            promotion.details["candidate_destinations"],
+            ["docs/index.md"],
+        )
+        self.assertEqual(
+            promotion.details["primary_canonical_destination"],
+            "docs/index.md",
+        )
+        self.assertEqual(
+            promotion.details["supporting_destination_docs"],
             [],
         )
 

@@ -19,9 +19,10 @@ from docgarden.quality import build_scorecard, write_quality_score
 from docgarden.scan_alignment import (
     extract_validation_commands,
     infer_promotion_destination_docs,
+    infer_supporting_promotion_destination_docs,
     is_supported_docgarden_command,
-    normalize_promotion_rule,
     is_promotion_rule_candidate,
+    normalize_promotion_rule,
     resolve_repo_artifact,
     stable_suffix,
 )
@@ -190,8 +191,38 @@ uv run docgarden quality write
 def test_promotion_helpers_filter_generic_text_and_infer_destinations(tmp_path) -> None:
     repo = tmp_path
     write(repo / "README.md", "# README\n")
-    write(repo / "docs" / "index.md", "# Docs Index\n")
+    write(
+        repo / "docs" / "index.md",
+        """---
+doc_id: docs-index
+doc_type: canonical
+domain: docs
+owner: kirby
+status: verified
+last_reviewed: 2026-03-08
+review_cycle_days: 30
+---
+
+# Docs Index
+""",
+    )
+    write(
+        repo / "docs" / "design-docs" / "index.md",
+        """---
+doc_id: design-docs-index
+doc_type: canonical
+domain: design-docs
+owner: kirby
+status: verified
+last_reviewed: 2026-03-08
+review_cycle_days: 30
+---
+
+# Design Docs Index
+""",
+    )
     write(repo / "docs" / "PLANS.md", "# Plans\n")
+    write(repo / "docs" / "design-docs" / "docgarden-spec.md", "# Docgarden Spec\n")
 
     generic_statement = "Keep this updated for future work."
     durable_statement = (
@@ -203,14 +234,42 @@ def test_promotion_helpers_filter_generic_text_and_infer_destinations(tmp_path) 
     assert normalize_promotion_rule(durable_statement) == (
         "full scans should remain the source of truth for findings.jsonl and score.json."
     )
-    assert infer_promotion_destination_docs(
-        normalize_promotion_rule(durable_statement),
+    assert [
+        suggestion.rel_path
+        for suggestion in infer_promotion_destination_docs(
+            normalize_promotion_rule(durable_statement),
+            source_files=[
+                "docs/exec-plans/active/plan-a.md",
+                "docs/exec-plans/active/plan-b.md",
+            ],
+            documents=[
+                parse_document(repo / "docs" / "index.md", repo),
+                parse_document(repo / "docs" / "design-docs" / "index.md", repo),
+            ],
+            repo_root=repo,
+        )
+    ] == ["docs/design-docs/index.md", "docs/index.md"]
+    assert [
+        suggestion.rel_path
+        for suggestion in infer_supporting_promotion_destination_docs(
+            normalize_promotion_rule(durable_statement),
+            source_files=[
+                "docs/exec-plans/active/plan-a.md",
+                "docs/exec-plans/active/plan-b.md",
+            ],
+            repo_root=repo,
+        )
+    ] == ["README.md", "docs/PLANS.md", "docs/design-docs/docgarden-spec.md"]
+    note_destination = infer_promotion_destination_docs(
+        "shared operating rule for transient docs",
         source_files=[
-            "docs/exec-plans/active/plan-a.md",
-            "docs/exec-plans/active/plan-b.md",
+            "docs/notes/temp-note.md",
         ],
+        documents=[parse_document(repo / "docs" / "index.md", repo)],
         repo_root=repo,
-    ) == ["docs/PLANS.md", "docs/index.md", "README.md"]
+    )[0]
+    assert note_destination.rel_path == "docs/index.md"
+    assert note_destination.reasons == ("note", "notes")
 
 
 def test_active_findings_from_latest_events_supports_legacy_history_payloads() -> None:
