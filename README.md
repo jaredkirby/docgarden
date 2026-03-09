@@ -125,10 +125,12 @@ as authoritative.
 summary from the current active findings plus current non-transient git changes.
 The JSON output includes the generated title/body, the exact finding ids in
 scope, the changed files list, and explicit publish blockers when remote
-automation is not configured.
+automation is not configured or when PR mode has no active findings in scope.
 
 Use `docgarden pr draft --unsafe-as-issue` when the active findings are not
 safe to autofix and you want a follow-up issue draft instead of a PR draft.
+With `--publish`, that path creates a normal GitHub issue, because GitHub does
+not have a draft-issue object.
 
 ## Automation
 

@@ -212,7 +212,10 @@ def build_parser() -> argparse.ArgumentParser:
     pr_draft.add_argument(
         "--publish",
         action="store_true",
-        help="Create the draft PR or issue through the configured provider.",
+        help=(
+            "Create the draft PR or, with `--unsafe-as-issue`, a normal issue "
+            "through the configured provider."
+        ),
     )
     pr_draft.set_defaults(func=command_pr_draft)
 

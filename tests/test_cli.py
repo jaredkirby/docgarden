@@ -678,6 +678,43 @@ Text.
     assert "pr_drafts.enabled: true" in error_output
 
 
+def test_cli_pr_draft_publish_rejects_empty_pr_scope(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    repo = make_repo(tmp_path)
+    write(
+        repo / ".docgarden" / "config.yaml",
+        """repo_name: test-docgarden
+strict_score_fail_threshold: 70
+pr_drafts:
+  enabled: true
+  provider: github
+  repository: acme/docgarden
+  base_branch: main
+  token_env_var: DOCGARDEN_GITHUB_TOKEN
+""",
+    )
+    init_git_repo(repo)
+    monkeypatch.chdir(repo)
+    monkeypatch.setenv("DOCGARDEN_GITHUB_TOKEN", "test-token")
+
+    assert main(["pr", "draft"]) == 0
+    preview_payload = json.loads(capsys.readouterr().out)
+
+    assert preview_payload["finding_count"] == 0
+    assert preview_payload["publish_ready"] is False
+    assert any(
+        "at least one active finding in scope" in blocker
+        for blocker in preview_payload["publish_blockers"]
+    )
+
+    assert main(["pr", "draft", "--publish"]) == 1
+    error_output = capsys.readouterr().err
+
+    assert "Cannot publish draft" in error_output
+    assert "at least one active finding in scope" in error_output
+
+
 def test_cli_pr_draft_publish_reports_remote_result(
     tmp_path, monkeypatch, capsys
 ) -> None:
@@ -746,6 +783,45 @@ Text.
     assert payload["publish_target"]["repository"] == "acme/docgarden"
     assert payload["remote"]["kind"] == "pull_request"
     assert payload["remote"]["number"] == 7
+
+
+def test_cli_pr_draft_publish_reports_remote_issue_result(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    repo = make_repo(tmp_path)
+    write(
+        repo / ".docgarden" / "config.yaml",
+        """repo_name: test-docgarden
+strict_score_fail_threshold: 70
+pr_drafts:
+  enabled: true
+  provider: github
+  repository: acme/docgarden
+  base_branch: main
+  token_env_var: DOCGARDEN_GITHUB_TOKEN
+""",
+    )
+    init_git_repo(repo)
+    write(repo / "docs" / "notes.md", "# Scratch Notes\n\nMissing frontmatter.\n")
+    monkeypatch.chdir(repo)
+    monkeypatch.setenv("DOCGARDEN_GITHUB_TOKEN", "test-token")
+    monkeypatch.setattr(
+        "docgarden.cli_commands.publish_pr_draft",
+        lambda repo_root, config, payload: {
+            "kind": "issue",
+            "number": 9,
+            "url": "https://github.com/acme/docgarden/issues/9",
+        },
+    )
+
+    assert main(["pr", "draft", "--unsafe-as-issue", "--publish"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+
+    assert payload["mode"] == "issue"
+    assert payload["published"] is True
+    assert payload["publish_ready"] is True
+    assert payload["remote"]["kind"] == "issue"
+    assert payload["remote"]["number"] == 9
 
 
 def test_cli_fix_safe_previews_and_applies_metadata_skeleton(tmp_path, monkeypatch, capsys) -> None:

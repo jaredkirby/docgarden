@@ -225,6 +225,11 @@ def build_pr_draft_payload(
         changed_file_count=len(changed_files),
         deleted_file_count=len(deleted_files),
     )
+    publish_blockers = _draft_publish_blockers(
+        target=target,
+        mode=mode,
+        finding_count=len(selected_findings),
+    )
 
     return {
         "mode": mode,
@@ -241,8 +246,8 @@ def build_pr_draft_payload(
         "deleted_files": deleted_files,
         "branch": branch_name,
         "publish_target": target.as_payload(),
-        "publish_ready": not target.publish_blockers(),
-        "publish_blockers": target.publish_blockers(),
+        "publish_ready": not publish_blockers,
+        "publish_blockers": publish_blockers,
         "published": False,
         "remote": None,
         "notes": notes,
@@ -251,7 +256,12 @@ def build_pr_draft_payload(
 
 def publish_pr_draft(repo_root: Path, config: Config, payload: dict[str, Any]) -> dict[str, Any]:
     target = DraftPublishTarget.from_config(config)
-    blockers = target.publish_blockers()
+    mode = str(payload.get("mode", "pr"))
+    blockers = _draft_publish_blockers(
+        target=target,
+        mode=mode,
+        finding_count=int(payload.get("finding_count", 0)),
+    )
     if blockers:
         raise DocgardenError("Cannot publish draft: " + " ".join(blockers))
 
@@ -261,7 +271,6 @@ def publish_pr_draft(repo_root: Path, config: Config, payload: dict[str, Any]) -
             f"Cannot publish draft without `{target.token_env_var}` in the environment."
         )
 
-    mode = str(payload.get("mode", "pr"))
     if mode == "pr":
         head_branch = current_branch_name(repo_root)
         if not head_branch or head_branch == "HEAD":
@@ -309,6 +318,22 @@ def _draft_title(*, mode: str, findings: list[Finding]) -> str:
     if mode == "issue":
         return f"docgarden: follow up on {count} unsafe finding(s)"
     return f"docgarden: draft fixes for {count} finding(s)"
+
+
+def _draft_publish_blockers(
+    *,
+    target: DraftPublishTarget,
+    mode: str,
+    finding_count: int,
+) -> list[str]:
+    blockers = list(target.publish_blockers())
+    if mode == "pr" and finding_count == 0:
+        blockers.append(
+            "Draft PR publish requires at least one active finding in scope. "
+            "Run `docgarden pr draft` without `--publish` for a local preview, "
+            "or wait until the next scan reports active findings."
+        )
+    return blockers
 
 
 def _draft_summary(
