@@ -1,4 +1,4 @@
-# docgarden
+# docgarden 🪴
 
 `docgarden` is a repo-local maintenance harness for agent-facing documentation.
 It scans for stale or malformed docs, writes an honest quality score, persists
