@@ -60,6 +60,7 @@ code itself rather than cosmetically gaming the score.
 - `.venv/bin/desloppify next`
 - `.venv/bin/python -m pytest`
 - `docgarden scan`
+- `scripts/reapply_codex_macos_proxy_fix.sh --help`
 
 ## Progress
 
@@ -89,6 +90,16 @@ code itself rather than cosmetically gaming the score.
   `desloppify review --run-batches --runner codex --parallel --scan-after-import`
   session; 19 of 20 batches completed on the first pass and the remaining batch
   succeeded on targeted retry.
+- 2026-03-08: Checked in a reproducible Codex patch artifact at
+  `scripts/codex-otel-no-proxy.patch` and a local reinstall helper at
+  `scripts/reapply_codex_macos_proxy_fix.sh` so future upgrades can reapply the
+  workaround without rediscovering the crash.
+- 2026-03-08: Extracted scan execution into `docgarden/scan_workflow.py`,
+  routed `next`/`status` through persisted plan order in `state.py`, and added
+  CLI regression coverage for plan-driven queue behavior.
+- 2026-03-08: Introduced `FindingContext`, removed redundant dataclass
+  serializer wrappers, preserved triage state across rescans, and made
+  `fix safe --apply` resync persisted state after file mutations.
 
 ## Discoveries
 
@@ -123,6 +134,14 @@ code itself rather than cosmetically gaming the score.
   batch 12 retried cleanly, and the stale `runner missing` hint came from
   `desloppify` classifying unrelated `command not found` lines inside the
   Codex session as if the top-level `codex` executable were missing.
+- A focused re-review of `design_coherence` and `abstraction_fitness` can
+  still lower scores even after fixing the first round of review issues,
+  because the narrower rerun gets another chance to surface deeper workflow
+  seams that the earlier holistic review accepted.
+- The stale-doc autofix and stale-review detector were inconsistent until scan
+  freshness checks were limited to currently `verified` docs; otherwise a doc
+  could be marked `needs-review` and still immediately re-open the same stale
+  finding on the next scan.
 
 ## Decision Log
 
@@ -148,6 +167,10 @@ code itself rather than cosmetically gaming the score.
 - 2026-03-08: Tighten the repo-local `desloppify` runner-missing classifier so
   only top-level `RUNNER ERROR` launch failures are labeled as missing Codex,
   rather than unrelated command errors emitted inside a live Codex session.
+- 2026-03-08: Preserve manual plan state across rescans and resync
+  post-autofix state immediately, because the targeted review rerun showed that
+  queue churn and stale persisted findings were still undermining workflow
+  coherence.
 
 ## Outcomes / Retrospective
 

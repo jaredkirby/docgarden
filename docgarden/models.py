@@ -1,8 +1,49 @@
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass, field
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+
+FINDING_STATUSES = frozenset(
+    {
+        "open",
+        "in_progress",
+        "fixed",
+        "accepted_debt",
+        "needs_human",
+        "false_positive",
+    }
+)
+INACTIVE_FINDING_STATUSES = frozenset({"fixed", "false_positive"})
+RESOLVED_FINDING_STATUSES = frozenset(
+    {"fixed", "accepted_debt", "needs_human", "false_positive"}
+)
+
+
+def _optional_string(value: Any) -> str | None:
+    return value if isinstance(value, str) and value else None
+
+
+def _string_list(value: Any) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    return [item for item in value if isinstance(item, str)]
+
+
+@dataclass(frozen=True, slots=True)
+class FindingContext:
+    rel_path: str
+    domain: str
+    discovered_at: str
+    confidence: str = "high"
+    files: list[str] = field(default_factory=list)
+
+    def finding_id(self, *, kind: str, suffix: str) -> str:
+        path_token = "::".join(Path(self.rel_path).parts)
+        return f"{kind}::{path_token}::{suffix}"
+
+    def finding_files(self) -> list[str]:
+        return list(self.files) if self.files else [self.rel_path]
 
 
 @dataclass(slots=True)
@@ -20,46 +61,67 @@ class Finding:
     discovered_at: str
     cluster: str
     confidence: str
+    attestation: str | None = None
+    resolved_by: str | None = None
+    resolution_note: str | None = None
+    resolved_at: str | None = None
     details: dict[str, Any] = field(default_factory=dict)
 
     @classmethod
     def open_issue(
         cls,
+        context: FindingContext,
         *,
-        rel_path: str,
         kind: str,
         severity: str,
-        domain: str,
         summary: str,
         evidence: list[str],
         recommended_action: str,
         safe_to_autofix: bool,
-        discovered_at: str,
         cluster: str,
-        confidence: str,
         suffix: str,
         details: dict[str, Any] | None = None,
     ) -> "Finding":
-        path_token = "::".join(Path(rel_path).parts)
         return cls(
-            id=f"{kind}::{path_token}::{suffix}",
+            id=context.finding_id(kind=kind, suffix=suffix),
             kind=kind,
             severity=severity,
-            domain=domain,
+            domain=context.domain,
             status="open",
-            files=[rel_path],
+            files=context.finding_files(),
             summary=summary,
             evidence=evidence,
             recommended_action=recommended_action,
             safe_to_autofix=safe_to_autofix,
-            discovered_at=discovered_at,
+            discovered_at=context.discovered_at,
             cluster=cluster,
-            confidence=confidence,
+            confidence=context.confidence,
             details=details or {},
         )
 
-    def to_dict(self) -> dict[str, Any]:
-        return asdict(self)
+    @classmethod
+    def from_dict(cls, payload: dict[str, Any]) -> "Finding":
+        details = payload.get("details")
+        return cls(
+            id=str(payload["id"]),
+            kind=str(payload["kind"]),
+            severity=str(payload["severity"]),
+            domain=str(payload["domain"]),
+            status=str(payload.get("status", "open")),
+            files=_string_list(payload.get("files")),
+            summary=str(payload["summary"]),
+            evidence=_string_list(payload.get("evidence")),
+            recommended_action=str(payload["recommended_action"]),
+            safe_to_autofix=bool(payload.get("safe_to_autofix", False)),
+            discovered_at=str(payload["discovered_at"]),
+            cluster=str(payload["cluster"]),
+            confidence=str(payload.get("confidence", "high")),
+            attestation=_optional_string(payload.get("attestation")),
+            resolved_by=_optional_string(payload.get("resolved_by")),
+            resolution_note=_optional_string(payload.get("resolution_note")),
+            resolved_at=_optional_string(payload.get("resolved_at")),
+            details=details if isinstance(details, dict) else {},
+        )
 
 
 @dataclass(slots=True)
@@ -72,10 +134,6 @@ class Scorecard:
     top_gaps: list[str]
     trend: dict[str, Any]
 
-    def to_dict(self) -> dict[str, Any]:
-        return asdict(self)
-
-
 @dataclass(slots=True)
 class PlanState:
     updated_at: str
@@ -85,10 +143,6 @@ class PlanState:
     clusters: dict[str, list[str]]
     deferred_items: list[str]
     last_scan_hash: str
-
-    def to_dict(self) -> dict[str, Any]:
-        return asdict(self)
-
 
 @dataclass(slots=True)
 class RepoPaths:

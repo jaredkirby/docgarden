@@ -19,6 +19,7 @@ from .scan_document_rules import (
     stale_review_finding,
     verified_without_sources_finding,
 )
+from .scan_alignment import alignment_findings
 from .scan_linkage import (
     append_inbound_link,
     broken_route_findings,
@@ -105,6 +106,8 @@ def _freshness_findings(
     now: datetime,
     discovered_at: str,
 ) -> list[Finding]:
+    if document.frontmatter.get("status") != "verified":
+        return []
     review_date = _parse_review_date(str(document.frontmatter.get("last_reviewed")))
     review_cycle = document.frontmatter.get("review_cycle_days")
     if not review_date or not isinstance(review_cycle, int):
@@ -187,6 +190,13 @@ def _scan_document(
     findings.extend(_section_findings(document, discovered_at=discovered_at))
     findings.extend(_freshness_findings(document, now=now, discovered_at=discovered_at))
     findings.extend(_trust_findings(document, discovered_at=discovered_at))
+    findings.extend(
+        alignment_findings(
+            document,
+            repo_root=repo_root,
+            discovered_at=discovered_at,
+        )
+    )
     findings.extend(
         _link_findings(
             document,

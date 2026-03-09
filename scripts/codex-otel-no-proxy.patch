@@ -1,0 +1,102 @@
+diff --git a/codex-rs/otel/src/metrics/client.rs b/codex-rs/otel/src/metrics/client.rs
+index 417c1f4bd..14bcb0064 100644
+--- a/codex-rs/otel/src/metrics/client.rs
++++ b/codex-rs/otel/src/metrics/client.rs
+@@ -389,14 +389,11 @@ fn build_otlp_metric_exporter(
+                 .with_protocol(protocol)
+                 .with_headers(headers);
+ 
+-            if let Some(tls) = tls.as_ref() {
+-                let client =
+-                    crate::otlp::build_http_client(tls, OTEL_EXPORTER_OTLP_METRICS_TIMEOUT)
+-                        .map_err(|err| MetricsError::InvalidConfig {
+-                            message: err.to_string(),
+-                        })?;
+-                exporter_builder = exporter_builder.with_http_client(client);
+-            }
++            let client = crate::otlp::build_http_client(tls.as_ref(), OTEL_EXPORTER_OTLP_METRICS_TIMEOUT)
++                .map_err(|err| MetricsError::InvalidConfig {
++                    message: err.to_string(),
++                })?;
++            exporter_builder = exporter_builder.with_http_client(client);
+ 
+             exporter_builder
+                 .build()
+diff --git a/codex-rs/otel/src/otlp.rs b/codex-rs/otel/src/otlp.rs
+index c70e5e55e..30a71d639 100644
+--- a/codex-rs/otel/src/otlp.rs
++++ b/codex-rs/otel/src/otlp.rs
+@@ -72,7 +72,7 @@ pub(crate) fn build_grpc_tls_config(
+ /// We use `reqwest::blocking::Client` because OTEL exporters run on dedicated
+ /// OS threads that are not necessarily backed by tokio.
+ pub(crate) fn build_http_client(
+-    tls: &OtelTlsConfig,
++    tls: Option<&OtelTlsConfig>,
+     timeout_var: &str,
+ ) -> Result<reqwest::blocking::Client, Box<dyn Error>> {
+     if tokio::runtime::Handle::try_current().is_ok() {
+@@ -83,13 +83,16 @@ pub(crate) fn build_http_client(
+ }
+ 
+ fn build_http_client_inner(
+-    tls: &OtelTlsConfig,
++    tls: Option<&OtelTlsConfig>,
+     timeout_var: &str,
+ ) -> Result<reqwest::blocking::Client, Box<dyn Error>> {
+-    let mut builder =
+-        reqwest::blocking::Client::builder().timeout(resolve_otlp_timeout(timeout_var));
++    let mut builder = reqwest::blocking::Client::builder()
++        .timeout(resolve_otlp_timeout(timeout_var))
++        // Avoid macOS system proxy discovery, which can panic in the
++        // system-configuration crate for some environments.
++        .no_proxy();
+ 
+-    if let Some(path) = tls.ca_certificate.as_ref() {
++    if let Some(path) = tls.and_then(|cfg| cfg.ca_certificate.as_ref()) {
+         let (pem, location) = read_bytes(path)?;
+         let certificate = ReqwestCertificate::from_pem(pem.as_slice()).map_err(|error| {
+             config_error(format!(
+@@ -102,7 +105,9 @@ fn build_http_client_inner(
+             .add_root_certificate(certificate);
+     }
+ 
+-    match (&tls.client_certificate, &tls.client_private_key) {
++    let client_certificate = tls.and_then(|cfg| cfg.client_certificate.as_ref());
++    let client_private_key = tls.and_then(|cfg| cfg.client_private_key.as_ref());
++    match (client_certificate, client_private_key) {
+         (Some(cert_path), Some(key_path)) => {
+             let (mut cert_pem, cert_location) = read_bytes(cert_path)?;
+             let (key_pem, key_location) = read_bytes(key_path)?;
+diff --git a/codex-rs/otel/src/provider.rs b/codex-rs/otel/src/provider.rs
+index dad09156a..7887bbe6a 100644
+--- a/codex-rs/otel/src/provider.rs
++++ b/codex-rs/otel/src/provider.rs
+@@ -267,10 +267,9 @@ fn build_logger(
+                 .with_protocol(protocol)
+                 .with_headers(headers);
+ 
+-            if let Some(tls) = tls.as_ref() {
+-                let client = crate::otlp::build_http_client(tls, OTEL_EXPORTER_OTLP_LOGS_TIMEOUT)?;
+-                exporter_builder = exporter_builder.with_http_client(client);
+-            }
++            let client =
++                crate::otlp::build_http_client(tls.as_ref(), OTEL_EXPORTER_OTLP_LOGS_TIMEOUT)?;
++            exporter_builder = exporter_builder.with_http_client(client);
+ 
+             let exporter = exporter_builder.build()?;
+ 
+@@ -332,11 +331,9 @@ fn build_tracer_provider(
+                 .with_protocol(protocol)
+                 .with_headers(headers);
+ 
+-            if let Some(tls) = tls.as_ref() {
+-                let client =
+-                    crate::otlp::build_http_client(tls, OTEL_EXPORTER_OTLP_TRACES_TIMEOUT)?;
+-                exporter_builder = exporter_builder.with_http_client(client);
+-            }
++            let client =
++                crate::otlp::build_http_client(tls.as_ref(), OTEL_EXPORTER_OTLP_TRACES_TIMEOUT)?;
++            exporter_builder = exporter_builder.with_http_client(client);
+ 
+             exporter_builder.build()?
+         }

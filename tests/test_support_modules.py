@@ -7,11 +7,18 @@ from pathlib import Path
 from docgarden.errors import ConfigError, DocgardenError, StateError
 from docgarden.files import atomic_write_text
 from docgarden.markdown import parse_document, replace_frontmatter, resolve_link_target
-from docgarden.models import Finding, PlanState, Scorecard
-from docgarden.quality import write_quality_score
+from docgarden.models import Finding, FindingContext, PlanState, Scorecard
+from docgarden.quality import build_scorecard, write_quality_score
+from docgarden.scan_alignment import (
+    extract_validation_commands,
+    is_supported_docgarden_command,
+    resolve_repo_artifact,
+)
 from docgarden.scan_document_rules import missing_frontmatter_finding
 from docgarden.scan_linkage import collect_domain_doc_counts, repo_relative_path
 from docgarden.state import (
+    active_findings_from_latest_events,
+    append_finding_status_event,
     append_scan_events,
     build_plan,
     ensure_state_dirs,
@@ -27,18 +34,20 @@ def write(path: Path, content: str) -> None:
 
 
 def test_finding_open_issue_builds_stable_identifier() -> None:
-    finding = Finding.open_issue(
+    context = FindingContext(
         rel_path="docs/exec-plans/active/plan.md",
+        domain="exec-plans",
+        discovered_at="2026-03-08T12:00:00",
+    )
+    finding = Finding.open_issue(
+        context,
         kind="missing-sections",
         severity="medium",
-        domain="exec-plans",
         summary="Missing headings.",
         evidence=["Missing headings: Validation"],
         recommended_action="Add the missing section.",
         safe_to_autofix=True,
-        discovered_at="2026-03-08T12:00:00",
         cluster="structure-gaps",
-        confidence="high",
         suffix="sections",
     )
 
@@ -71,6 +80,7 @@ See [Plan](exec-plans/active/plan.md) and docs/reference.md.
     assert document.rel_path == "docs/index.md"
     assert document.links == ["exec-plans/active/plan.md"]
     assert "docs/reference.md" in document.routed_paths
+    assert "docs/plan.md" not in document.routed_paths
 
     replaced = replace_frontmatter(document.raw_text, {**document.frontmatter, "status": "draft"})
     assert "status: draft" in replaced
@@ -117,23 +127,77 @@ def test_scan_rule_helpers_cover_new_modules(tmp_path) -> None:
     assert collect_domain_doc_counts([document]) == {}
 
 
+def test_alignment_helpers_handle_repo_artifacts_and_commands(tmp_path) -> None:
+    repo = tmp_path
+
+    assert resolve_repo_artifact(repo, "pyproject.toml") == repo / "pyproject.toml"
+    assert resolve_repo_artifact(repo, "docs/index.md") == repo / "docs" / "index.md"
+    assert resolve_repo_artifact(repo, "implementation linked") is None
+
+    commands = extract_validation_commands(
+        """
+## Validation / How to verify
+
+- `docgarden scan`
+
+```bash
+uv run docgarden quality write
+```
+"""
+    )
+    assert commands == ["docgarden scan", "uv run docgarden quality write"]
+    assert is_supported_docgarden_command("docgarden scan") is True
+    assert is_supported_docgarden_command("python -m docgarden.cli quality write") is True
+    assert is_supported_docgarden_command("docgarden review prepare") is False
+
+
+def test_active_findings_from_latest_events_supports_legacy_history_payloads() -> None:
+    latest = {
+        "missing-sections::docs::index.md::sections": {
+            "id": "missing-sections::docs::index.md::sections",
+            "kind": "missing-sections",
+            "severity": "medium",
+            "domain": "docs",
+            "status": "open",
+            "files": ["docs/index.md"],
+            "summary": "Missing headings.",
+            "evidence": ["Missing headings: Scope"],
+            "recommended_action": "Add the missing section.",
+            "safe_to_autofix": True,
+            "discovered_at": "2026-03-08T12:00:00",
+            "cluster": "structure-gaps",
+            "confidence": "high",
+        }
+    }
+
+    findings = active_findings_from_latest_events(latest)
+
+    assert [finding.id for finding in findings] == [
+        "missing-sections::docs::index.md::sections"
+    ]
+    assert findings[0].attestation is None
+    assert findings[0].resolved_at is None
+
+
 def test_state_helpers_persist_findings_and_plan(tmp_path) -> None:
     state_dir = tmp_path / ".docgarden"
     ensure_state_dirs(state_dir)
     findings_path = state_dir / "findings.jsonl"
 
-    finding = Finding.open_issue(
+    context = FindingContext(
         rel_path="docs/index.md",
+        domain="docs",
+        discovered_at="2026-03-08T12:00:00",
+    )
+    finding = Finding.open_issue(
+        context,
         kind="missing-sections",
         severity="medium",
-        domain="docs",
         summary="Missing headings.",
         evidence=["Missing headings: Scope"],
         recommended_action="Add the missing section.",
         safe_to_autofix=True,
-        discovered_at="2026-03-08T12:00:00",
         cluster="structure-gaps",
-        confidence="high",
         suffix="sections",
     )
     scan_time = datetime(2026, 3, 8, 12, 0, 0)
@@ -151,6 +215,114 @@ def test_state_helpers_persist_findings_and_plan(tmp_path) -> None:
     output_path = state_dir / "score.json"
     write_json(output_path, {"strict_score": 91})
     assert json.loads(output_path.read_text())["strict_score"] == 91
+
+
+def test_state_helpers_preserve_manual_status_metadata_across_scans(tmp_path) -> None:
+    state_dir = tmp_path / ".docgarden"
+    ensure_state_dirs(state_dir)
+    findings_path = state_dir / "findings.jsonl"
+
+    context = FindingContext(
+        rel_path="docs/index.md",
+        domain="docs",
+        discovered_at="2026-03-08T12:00:00",
+    )
+    finding = Finding.open_issue(
+        context,
+        kind="missing-sections",
+        severity="medium",
+        summary="Missing headings.",
+        evidence=["Missing headings: Scope"],
+        recommended_action="Add the missing section.",
+        safe_to_autofix=True,
+        cluster="structure-gaps",
+        suffix="sections",
+    )
+
+    append_scan_events(findings_path, [finding], datetime(2026, 3, 8, 12, 0, 0))
+    append_finding_status_event(
+        findings_path,
+        finding.id,
+        status="accepted_debt",
+        event_at=datetime(2026, 3, 8, 13, 0, 0),
+        attestation="Known gap accepted until the next planning cycle.",
+        resolved_by="kirby",
+        resolution_note="Tracked as intentional doc debt for now.",
+    )
+    latest = append_scan_events(
+        findings_path,
+        [finding],
+        datetime(2026, 3, 8, 14, 0, 0),
+    )
+
+    active_findings = active_findings_from_latest_events(latest)
+
+    assert [item.status for item in active_findings] == ["accepted_debt"]
+    assert active_findings[0].attestation == (
+        "Known gap accepted until the next planning cycle."
+    )
+    assert active_findings[0].resolved_by == "kirby"
+    assert active_findings[0].resolution_note == (
+        "Tracked as intentional doc debt for now."
+    )
+    assert active_findings[0].resolved_at == "2026-03-08T13:00:00"
+
+    scorecard = build_scorecard(
+        active_findings,
+        {"docs": 1},
+        datetime(2026, 3, 8, 14, 0, 0),
+    )
+    assert scorecard.overall_score == 100
+    assert scorecard.strict_score < scorecard.overall_score
+
+
+def test_append_finding_status_event_supports_additional_statuses(tmp_path) -> None:
+    state_dir = tmp_path / ".docgarden"
+    ensure_state_dirs(state_dir)
+    findings_path = state_dir / "findings.jsonl"
+
+    context = FindingContext(
+        rel_path="docs/index.md",
+        domain="docs",
+        discovered_at="2026-03-08T12:00:00",
+    )
+    finding = Finding.open_issue(
+        context,
+        kind="missing-sections",
+        severity="medium",
+        summary="Missing headings.",
+        evidence=["Missing headings: Scope"],
+        recommended_action="Add the missing section.",
+        safe_to_autofix=True,
+        cluster="structure-gaps",
+        suffix="sections",
+    )
+    append_scan_events(findings_path, [finding], datetime(2026, 3, 8, 12, 0, 0))
+
+    in_progress = append_finding_status_event(
+        findings_path,
+        finding.id,
+        status="in_progress",
+        event_at=datetime(2026, 3, 8, 12, 15, 0),
+    )
+    needs_human = append_finding_status_event(
+        findings_path,
+        finding.id,
+        status="needs_human",
+        event_at=datetime(2026, 3, 8, 12, 30, 0),
+        attestation="This mismatch needs a reviewer before we change the doc.",
+    )
+    false_positive = append_finding_status_event(
+        findings_path,
+        finding.id,
+        status="false_positive",
+        event_at=datetime(2026, 3, 8, 12, 45, 0),
+        attestation="Scanner reproduced locally and confirmed this is a false alarm.",
+    )
+
+    assert in_progress["resolved_at"] is None
+    assert needs_human["resolved_at"] == "2026-03-08T12:30:00"
+    assert false_positive["resolved_at"] == "2026-03-08T12:45:00"
 
 
 def test_write_quality_score_updates_existing_frontmatter(tmp_path) -> None:

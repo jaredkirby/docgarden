@@ -4,7 +4,7 @@ from collections import Counter, defaultdict
 from pathlib import Path
 
 from .markdown import Document, resolve_link_target
-from .models import Finding
+from .models import Finding, FindingContext
 from .scan_document_rules import document_domain
 
 
@@ -65,19 +65,21 @@ def duplicate_doc_id_findings(
         for document in documents:
             if document.frontmatter.get("doc_id") != doc_id:
                 continue
+            context = FindingContext(
+                rel_path=document.rel_path,
+                domain=document_domain(document),
+                discovered_at=discovered_at,
+            )
             findings.append(
                 Finding.open_issue(
-                    rel_path=document.rel_path,
+                    context,
                     kind="duplicate-doc-id",
                     severity="high",
-                    domain=document_domain(document),
                     summary=f"{document.rel_path} uses duplicate doc_id `{doc_id}`.",
                     evidence=[f"doc_id `{doc_id}` appears {count} times."],
                     recommended_action="Give each doc a unique doc_id.",
                     safe_to_autofix=False,
-                    discovered_at=discovered_at,
                     cluster="metadata-gaps",
-                    confidence="high",
                     suffix="duplicate-id",
                 )
             )
@@ -102,19 +104,21 @@ def broken_route_findings(
             continue
 
         source = sorted(referrers)[0]
+        context = FindingContext(
+            rel_path=source,
+            domain="docs",
+            discovered_at=discovered_at,
+        )
         findings.append(
             Finding.open_issue(
-                rel_path=source,
+                context,
                 kind="broken-route",
                 severity="high" if source == "AGENTS.md" else "medium",
-                domain="docs",
                 summary=f"{source} routes to a missing file.",
                 evidence=[f"Missing route target: {target}"],
                 recommended_action="Update the route to point at an existing canonical doc.",
                 safe_to_autofix=False,
-                discovered_at=discovered_at,
                 cluster="routing-drift",
-                confidence="high",
                 suffix=f"route-{abs(hash(target))}",
             )
         )
@@ -135,19 +139,22 @@ def orphan_doc_findings(
             continue
         if document.rel_path in inbound_links:
             continue
+        context = FindingContext(
+            rel_path=document.rel_path,
+            domain=document_domain(document),
+            discovered_at=discovered_at,
+            confidence="medium",
+        )
         findings.append(
             Finding.open_issue(
-                rel_path=document.rel_path,
+                context,
                 kind="orphan-doc",
                 severity="low",
-                domain=document_domain(document),
                 summary=f"{document.rel_path} is not linked from any scanned document.",
                 evidence=["No inbound markdown links were found in scanned docs."],
                 recommended_action="Link the doc from an index, canonical doc, or AGENTS route.",
                 safe_to_autofix=False,
-                discovered_at=discovered_at,
                 cluster="routing-drift",
-                confidence="medium",
                 suffix="orphan",
             )
         )

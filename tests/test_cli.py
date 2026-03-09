@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 import json
+from dataclasses import asdict
 from pathlib import Path
 
 from docgarden.cli import main
-from docgarden.cli_commands import repo_paths, run_scan
+from docgarden.cli_commands import repo_paths
+from docgarden.scan_workflow import run_scan
+from docgarden.state import load_plan
 
 CANONICAL_FRONTMATTER = """---
 doc_id: docs-index
@@ -142,18 +145,157 @@ Text.
     assert main(["fix", "safe", "--apply"]) == 0
     applied_payload = json.loads(capsys.readouterr().out)
     assert applied_payload["changed_files"] == ["docs/stale.md"]
+    assert next_payload["id"] not in set(applied_payload.get("fixable", []))
     assert "status: needs-review" in (repo / "docs" / "stale.md").read_text()
+
+    assert main(["show", next_payload["id"]]) == 0
+    refreshed_payload = json.loads(capsys.readouterr().out)
+    assert refreshed_payload["status"] == "fixed"
+    assert refreshed_payload["event"] == "resolved"
 
 
 def test_cli_commands_module_is_directly_exercised(tmp_path) -> None:
     repo = make_repo(tmp_path)
     paths = repo_paths(repo)
-    run_result = run_scan(repo)
+    run_result = run_scan(paths)
 
     assert run_result.findings == []
     assert run_result.scorecard.strict_score == 100
     assert run_result.latest_events == {}
     assert paths.quality == repo / "docs" / "QUALITY_SCORE.md"
+
+
+def test_cli_next_and_status_follow_persisted_plan_order(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    repo = make_repo(tmp_path)
+    for name in ("alpha", "beta"):
+        write(
+            repo / "docs" / f"{name}.md",
+            CANONICAL_FRONTMATTER.replace("docs-index", f"{name}-doc").replace(
+                "2026-03-08", "2026-01-01"
+            )
+            + f"""
+# {name.title()} Doc
+
+## Purpose
+Text.
+
+## Scope
+Text.
+
+## Source of Truth
+Text.
+
+## Rules / Definitions
+Text.
+
+## Exceptions / Caveats
+Text.
+
+## Validation / How to verify
+Text.
+
+## Related docs
+Text.
+""",
+        )
+
+    monkeypatch.chdir(repo)
+    assert main(["scan"]) == 0
+    capsys.readouterr()
+
+    paths = repo_paths(repo)
+    plan = load_plan(paths.plan)
+    beta_id = next(
+        finding_id for finding_id in plan.ordered_findings if "docs::beta.md" in finding_id
+    )
+    alpha_id = next(
+        finding_id for finding_id in plan.ordered_findings if "docs::alpha.md" in finding_id
+    )
+    reordered = plan.__class__(
+        updated_at=plan.updated_at,
+        lifecycle_stage=plan.lifecycle_stage,
+        current_focus=beta_id,
+        ordered_findings=[beta_id, alpha_id],
+        clusters=plan.clusters,
+        deferred_items=plan.deferred_items,
+        last_scan_hash=plan.last_scan_hash,
+    )
+    paths.plan.write_text(json.dumps(asdict(reordered), indent=2, sort_keys=True) + "\n")
+
+    assert main(["next"]) == 0
+    next_payload = json.loads(capsys.readouterr().out)
+    assert next_payload["id"] == beta_id
+
+    assert main(["status"]) == 0
+    status_payload = json.loads(capsys.readouterr().out)
+    assert status_payload["open_ids"][:2] == [beta_id, alpha_id]
+
+
+def test_scan_preserves_existing_plan_state(tmp_path) -> None:
+    repo = make_repo(tmp_path)
+    for name in ("alpha", "beta"):
+        write(
+            repo / "docs" / f"{name}.md",
+            CANONICAL_FRONTMATTER.replace("docs-index", f"{name}-doc").replace(
+                "2026-03-08", "2026-01-01"
+            )
+            + f"""
+# {name.title()} Doc
+
+## Purpose
+Text.
+
+## Scope
+Text.
+
+## Source of Truth
+Text.
+
+## Rules / Definitions
+Text.
+
+## Exceptions / Caveats
+Text.
+
+## Validation / How to verify
+Text.
+
+## Related docs
+Text.
+""",
+        )
+
+    paths = repo_paths(repo)
+    run_scan(paths)
+
+    original_plan = load_plan(paths.plan)
+    beta_id = next(
+        finding_id for finding_id in original_plan.ordered_findings if "docs::beta.md" in finding_id
+    )
+    alpha_id = next(
+        finding_id for finding_id in original_plan.ordered_findings if "docs::alpha.md" in finding_id
+    )
+    preserved_plan = original_plan.__class__(
+        updated_at=original_plan.updated_at,
+        lifecycle_stage="organize",
+        current_focus=beta_id,
+        ordered_findings=[beta_id, alpha_id],
+        clusters={**original_plan.clusters, "manual/review": [beta_id]},
+        deferred_items=[alpha_id],
+        last_scan_hash=original_plan.last_scan_hash,
+    )
+    paths.plan.write_text(json.dumps(asdict(preserved_plan), indent=2, sort_keys=True) + "\n")
+
+    run_scan(paths)
+    updated_plan = load_plan(paths.plan)
+
+    assert updated_plan.lifecycle_stage == "organize"
+    assert updated_plan.current_focus == beta_id
+    assert updated_plan.ordered_findings[:2] == [beta_id, alpha_id]
+    assert updated_plan.deferred_items == [alpha_id]
+    assert updated_plan.clusters["manual/review"] == [beta_id]
 
 
 def test_cli_config_show_reports_invalid_config_with_nonzero_exit(
