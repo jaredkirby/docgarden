@@ -9,6 +9,7 @@ import time
 import sys
 from pathlib import Path
 
+from .automation import build_ci_check_payload
 from .config import Config
 from .errors import DocgardenError
 from .fixers import apply_safe_fixes, preview_safe_fixes
@@ -128,6 +129,13 @@ def command_status(_: argparse.Namespace) -> None:
             indent=2,
         )
     )
+
+
+def command_ci_check(_: argparse.Namespace) -> int:
+    paths = repo_paths(Path.cwd())
+    payload = build_ci_check_payload(paths)
+    print(json.dumps(payload, indent=2, sort_keys=True))
+    return 0 if payload["passed"] else 2
 
 
 def command_next(_: argparse.Namespace) -> None:

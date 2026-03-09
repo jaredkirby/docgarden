@@ -36,6 +36,10 @@ class Config:
                 )
             normalized_weights[domain] = weight
         self.domain_weights = normalized_weights
+        if not isinstance(self.block_on, list) or not all(
+            isinstance(item, str) for item in self.block_on
+        ):
+            raise TypeError("block_on must be a list of strings")
 
     @classmethod
     def load(cls, path: Path) -> "Config":

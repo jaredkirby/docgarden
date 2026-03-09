@@ -42,6 +42,9 @@ and how multi-step work should be tracked.
 - Active implementation work belongs in `docs/exec-plans/active/`.
 - Design intent and future-shape specs live in `docs/design-docs/`.
 - Generated quality output is published in `docs/QUALITY_SCORE.md`.
+- Repo automation under `.github/workflows/docgarden-*.yml` enforces scans,
+  publishes score artifacts, and keeps scheduled review or autofix runs
+  auditable.
 
 ## Exceptions / Caveats
 

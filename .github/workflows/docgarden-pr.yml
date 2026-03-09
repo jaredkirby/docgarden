@@ -1,0 +1,102 @@
+name: docgarden-pr
+
+on:
+  pull_request:
+    paths:
+      - "AGENTS.md"
+      - "README.md"
+      - "docs/**"
+      - "docgarden/**"
+      - "tests/**"
+      - ".docgarden/config.yaml"
+      - ".github/workflows/docgarden-*.yml"
+      - "pyproject.toml"
+      - "uv.lock"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  enforce:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Run full scan
+        run: |
+          set -euo pipefail
+          mkdir -p .docgarden/automation-artifacts/pr
+          uv run docgarden scan | tee .docgarden/automation-artifacts/pr/scan.json
+
+      - name: Refresh quality output and status snapshot
+        run: |
+          set -euo pipefail
+          uv run docgarden quality write
+          cp docs/QUALITY_SCORE.md .docgarden/automation-artifacts/pr/QUALITY_SCORE.md
+          uv run docgarden status | tee .docgarden/automation-artifacts/pr/status.json
+
+      - name: Evaluate configured blockers
+        run: |
+          set -euo pipefail
+          uv run docgarden ci check | tee .docgarden/automation-artifacts/pr/check.json
+
+      - name: Write PR summary
+        if: always()
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          summary_path = Path(os.environ["GITHUB_STEP_SUMMARY"])
+          check_path = Path(".docgarden/automation-artifacts/pr/check.json")
+          scan_path = Path(".docgarden/automation-artifacts/pr/scan.json")
+
+          lines = ["## Docgarden PR enforcement", ""]
+          if scan_path.exists():
+              scan_payload = json.loads(scan_path.read_text(encoding="utf-8"))
+              lines.append(
+                  f"- Scan findings: {scan_payload.get('findings')} "
+                  f"(strict score: {scan_payload.get('strict_score')})"
+              )
+          if check_path.exists():
+              check_payload = json.loads(check_path.read_text(encoding="utf-8"))
+              lines.append(f"- Passed: {check_payload.get('passed')}")
+              lines.append(
+                  f"- Active score-relevant findings: "
+                  f"{check_payload.get('active_score_relevant_findings')}"
+              )
+              for failure in check_payload.get("failures", []):
+                  if failure.get("type") == "blocking_rule":
+                      lines.append(
+                          f"- Blocking rule `{failure['rule']}` matched "
+                          f"{failure['finding_count']} finding(s)"
+                      )
+                  else:
+                      lines.append(f"- {failure.get('summary')}")
+          else:
+              lines.append("- `docgarden ci check` did not produce output.")
+
+          summary_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+          PY
+
+      - name: Upload PR artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: docgarden-pr-${{ github.run_id }}
+          path: .docgarden/automation-artifacts/pr
+          retention-days: 14

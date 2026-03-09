@@ -76,8 +76,8 @@ criteria rather than re-explaining the whole product vision.
 | S09 | completed | Score trend and weighted domain rollups | S02 |
 | S10 | completed | Review packet preparation and import | S02, S03 |
 | S11 | completed | Safe autofix expansion | S07, S08 |
-| S12 | queued | CI enforcement and scheduled automation | S03, S09, S11 |
-| S13 | blocked | Draft PR / issue automation | S12 |
+| S12 | completed | CI enforcement and scheduled automation | S03, S09, S11 |
+| S13 | queued | Draft PR / issue automation | S12 |
 | S14 | blocked | Promotion suggestions from transient docs | S10 |
 
 ## Current baseline
@@ -396,7 +396,7 @@ Acceptance:
 
 ### S12: CI enforcement and scheduled automation
 
-Status: `queued`
+Status: `completed`
 
 Goal:
 - Move `docgarden` from a local tool to a repo enforcement loop.

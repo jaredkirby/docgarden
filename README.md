@@ -12,6 +12,7 @@ docgarden scan
 docgarden scan --scope changed
 docgarden scan --scope changed --files docs/index.md docs/workflows/reporting.md
 docgarden status
+docgarden ci check
 docgarden next
 docgarden review prepare --domains docs,design-docs
 docgarden review import review.json
@@ -116,6 +117,26 @@ honest.
 Use changed-scope scans for fast local feedback while editing docs, then return
 to a full `docgarden scan` before treating the score, queue, or persisted state
 as authoritative.
+
+## Automation
+
+`docgarden ci check` evaluates the persisted score after a full scan and exits
+nonzero when either the configured strict-score threshold or any configured
+`block_on` rule trips. The output is structured JSON so CI can fail clearly
+while still uploading an auditable summary.
+
+This repo now includes three GitHub Actions workflows:
+
+- `.github/workflows/docgarden-pr.yml`
+  Runs a full scan on PRs, refreshes `QUALITY_SCORE.md`, evaluates
+  `docgarden ci check`, and uploads the scan/check artifacts.
+- `.github/workflows/docgarden-nightly.yml`
+  Runs a nightly full scan, refreshes the quality report, applies
+  `docgarden fix safe --apply` only inside the CI workspace, and uploads any
+  resulting patch instead of mutating repo truth directly.
+- `.github/workflows/docgarden-weekly-review.yml`
+  Runs a weekly scan, prepares a review packet, groups in-scope docs by owner,
+  and uploads the packet plus owner-nudge artifacts.
 
 ## Slice automation
 
@@ -313,8 +334,12 @@ The repo currently includes:
 - deterministic safe autofix previews plus low-risk apply support for metadata,
   headings, stale status, unambiguous link repairs, and exact route-reference
   repairs to current canonical docs
+- a CI-friendly `docgarden ci check` command for threshold and blocker
+  enforcement
+- GitHub Actions for PR enforcement, nightly scan plus safe-autofix patch
+  capture, and weekly review-packet owner nudges
 - automated slice kickoff and review prompt generation from the slice backlog
 - a Codex worker/reviewer loop that can continue until a slice is accepted or
   blocked
 
-Next planned slice: CI enforcement and scheduled automation.
+Next planned slice: Draft PR and issue automation.

@@ -1,0 +1,104 @@
+name: docgarden-nightly
+
+on:
+  schedule:
+    - cron: "17 6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  nightly:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Run nightly scan
+        run: |
+          set -euo pipefail
+          mkdir -p .docgarden/automation-artifacts/nightly
+          uv run docgarden scan | tee .docgarden/automation-artifacts/nightly/scan.json
+
+      - name: Refresh quality output and status snapshot
+        run: |
+          set -euo pipefail
+          uv run docgarden quality write
+          cp docs/QUALITY_SCORE.md .docgarden/automation-artifacts/nightly/QUALITY_SCORE.md
+          uv run docgarden status | tee .docgarden/automation-artifacts/nightly/status.json
+
+      - name: Apply safe autofix in the CI workspace
+        run: |
+          set -euo pipefail
+          uv run docgarden fix safe --apply | tee .docgarden/automation-artifacts/nightly/fix-safe.json
+          if git diff --quiet; then
+            printf "none\n" > .docgarden/automation-artifacts/nightly/changed-paths.txt
+            : > .docgarden/automation-artifacts/nightly/safe-autofix.patch
+          else
+            git diff --name-only > .docgarden/automation-artifacts/nightly/changed-paths.txt
+            git diff --binary > .docgarden/automation-artifacts/nightly/safe-autofix.patch
+          fi
+
+      - name: Snapshot persisted state for audit
+        if: always()
+        run: |
+          set -euo pipefail
+          for path in .docgarden/score.json .docgarden/plan.json .docgarden/findings.jsonl; do
+            if [ -f "$path" ]; then
+              cp "$path" ".docgarden/automation-artifacts/nightly/$(basename "$path")"
+            fi
+          done
+
+      - name: Write nightly summary
+        if: always()
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          summary_path = Path(os.environ["GITHUB_STEP_SUMMARY"])
+          scan_path = Path(".docgarden/automation-artifacts/nightly/scan.json")
+          changes_path = Path(".docgarden/automation-artifacts/nightly/changed-paths.txt")
+
+          lines = ["## Docgarden nightly automation", ""]
+          if scan_path.exists():
+              scan_payload = json.loads(scan_path.read_text(encoding="utf-8"))
+              lines.append(
+                  f"- Full scan findings: {scan_payload.get('findings')} "
+                  f"(strict score: {scan_payload.get('strict_score')})"
+              )
+          if changes_path.exists():
+              changed_paths = [
+                  line.strip()
+                  for line in changes_path.read_text(encoding="utf-8").splitlines()
+                  if line.strip() and line.strip() != "none"
+              ]
+              if changed_paths:
+                  lines.append("- Safe autofix produced a patch artifact for review.")
+                  for rel_path in changed_paths:
+                      lines.append(f"- Changed path: `{rel_path}`")
+              else:
+                  lines.append("- Safe autofix did not produce any changes.")
+          summary_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+          PY
+
+      - name: Upload nightly artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: docgarden-nightly-${{ github.run_id }}
+          path: .docgarden/automation-artifacts/nightly
+          retention-days: 21

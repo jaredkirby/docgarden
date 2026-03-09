@@ -1,0 +1,144 @@
+name: docgarden-weekly-review
+
+on:
+  schedule:
+    - cron: "5 7 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  weekly-review:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Refresh scan state
+        run: |
+          set -euo pipefail
+          mkdir -p .docgarden/automation-artifacts/weekly-review
+          uv run docgarden scan | tee .docgarden/automation-artifacts/weekly-review/scan.json
+          uv run docgarden status | tee .docgarden/automation-artifacts/weekly-review/status.json
+
+      - name: Prepare weekly review packet and owner nudges
+        run: |
+          set -euo pipefail
+          uv run docgarden review prepare | tee .docgarden/automation-artifacts/weekly-review/review-prepare.json
+          python - <<'PY'
+          import json
+          from collections import defaultdict
+          from pathlib import Path
+
+          artifact_dir = Path(".docgarden/automation-artifacts/weekly-review")
+          prepare_payload = json.loads(
+              (artifact_dir / "review-prepare.json").read_text(encoding="utf-8")
+          )
+          packet_path = Path(prepare_payload["path"])
+          packet_payload = json.loads(packet_path.read_text(encoding="utf-8"))
+
+          owners = defaultdict(list)
+          for document in packet_payload.get("documents", []):
+              frontmatter = document.get("frontmatter") or {}
+              owner = str(frontmatter.get("owner", "unknown")).strip() or "unknown"
+              owners[owner].append(document["rel_path"])
+
+          owner_nudges = [
+              {
+                  "owner": owner,
+                  "documents": sorted(paths),
+                  "document_count": len(paths),
+              }
+              for owner, paths in sorted(owners.items())
+          ]
+
+          nudge_payload = {
+              "packet_id": packet_payload["packet_id"],
+              "document_count": len(packet_payload.get("documents", [])),
+              "owner_nudges": owner_nudges,
+              "skipped_documents": packet_payload.get("scope", {}).get(
+                  "skipped_documents", []
+              ),
+          }
+          (artifact_dir / "review-packet.json").write_text(
+              json.dumps(packet_payload, indent=2) + "\n",
+              encoding="utf-8",
+          )
+          (artifact_dir / "owner-nudges.json").write_text(
+              json.dumps(nudge_payload, indent=2) + "\n",
+              encoding="utf-8",
+          )
+
+          markdown_lines = [
+              "# Weekly review packet",
+              "",
+              f"- Packet ID: `{packet_payload['packet_id']}`",
+              f"- Documents in scope: {len(packet_payload.get('documents', []))}",
+          ]
+          for owner_entry in owner_nudges:
+              markdown_lines.append(
+                  f"- Owner `{owner_entry['owner']}`: "
+                  f"{owner_entry['document_count']} document(s)"
+              )
+          skipped_documents = nudge_payload["skipped_documents"]
+          if skipped_documents:
+              markdown_lines.append("- Skipped docs:")
+              for item in skipped_documents:
+                  markdown_lines.append(
+                      f"  - `{item['rel_path']}` ({item['reason']})"
+                  )
+          (artifact_dir / "owner-nudges.md").write_text(
+              "\n".join(markdown_lines) + "\n",
+              encoding="utf-8",
+          )
+          PY
+
+      - name: Write weekly summary
+        if: always()
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          summary_path = Path(os.environ["GITHUB_STEP_SUMMARY"])
+          nudge_path = Path(".docgarden/automation-artifacts/weekly-review/owner-nudges.json")
+
+          lines = ["## Docgarden weekly review", ""]
+          if nudge_path.exists():
+              payload = json.loads(nudge_path.read_text(encoding="utf-8"))
+              lines.append(f"- Packet ID: `{payload['packet_id']}`")
+              lines.append(f"- Documents in scope: {payload['document_count']}")
+              for owner_entry in payload.get("owner_nudges", []):
+                  lines.append(
+                      f"- Owner `{owner_entry['owner']}` should review "
+                      f"{owner_entry['document_count']} document(s)"
+                  )
+              skipped_documents = payload.get("skipped_documents", [])
+              if skipped_documents:
+                  lines.append(f"- Skipped documents: {len(skipped_documents)}")
+          else:
+              lines.append("- Weekly review packet generation did not complete.")
+
+          summary_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+          PY
+
+      - name: Upload weekly review artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: docgarden-weekly-review-${{ github.run_id }}
+          path: .docgarden/automation-artifacts/weekly-review
+          retention-days: 21

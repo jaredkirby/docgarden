@@ -98,6 +98,9 @@ spec sections to PR-sized implementation units.
 - 2026-03-09: Implemented S11 safe autofix expansion so `docgarden fix safe` now previews and applies deterministic metadata skeletons, unambiguous broken-link repairs, and index or AGENTS route replacements when the target is uniquely resolvable.
 - 2026-03-09: Kept S11 bounded to mechanical edits by requiring scanner-produced replacement details up front and leaving ambiguous links, multi-candidate route replacements, and prose-level truth changes outside the safe-fix path.
 - 2026-03-09: Tightened S11 after review so broken-route autofixes only target uniquely resolved current canonical docs, and route edits now apply only at exact routed reference instances instead of file-wide token rewrites.
+- 2026-03-09: Implemented S12 with a repo-owned `docgarden ci check` command that turns the configured strict-score threshold and `block_on` rules into CI-friendly JSON output plus a clean nonzero exit code.
+- 2026-03-09: Added PR, nightly, and weekly-review GitHub Actions workflows that run full scans, refresh score artifacts, and upload structured audit outputs under workflow artifacts instead of mutating repo truth directly.
+- 2026-03-09: Tightened the weekly automation loop so review packets are grouped into owner-nudge artifacts, while nightly safe autofix publishes a patch artifact for inspection rather than opening or mutating a truth-bearing PR directly.
 
 ## Discoveries
 
@@ -198,6 +201,12 @@ spec sections to PR-sized implementation units.
 - Route autofix needs location-scoped edits for plain path references; a global
   token substitution is deterministic but still unsafe because it can rewrite
   truth-bearing prose that merely mentions the same path.
+- Scheduled automation is safest when it writes audit artifacts and patches
+  first; that preserves traceability without forcing business-truth docs to
+  change outside an explicit human review step.
+- The existing config already had the right enforcement knobs, but they only
+  became operational once a CI-facing command translated those settings into a
+  stable machine-readable contract.
 
 ## Decision Log
 
@@ -269,7 +278,13 @@ spec sections to PR-sized implementation units.
 - 2026-03-09: Model S11 autofix eligibility as finding-level deterministic
   details carried from scan time into preview and apply time, rather than
   letting the fixer infer replacements on its own from file contents.
+- 2026-03-09: Implement S12 enforcement as a dedicated `docgarden ci check`
+  surface so GitHub Actions can reuse repo-local blocking semantics instead of
+  reimplementing score and finding rules in shell.
+- 2026-03-09: Keep nightly automation auditable by uploading the generated
+  score artifacts and any safe-autofix patch, but stop short of auto-committing
+  or opening PRs until the later draft-PR slice lands.
 
 ## Outcomes / Retrospective
 
-S11 is now implemented and verified with repo tests plus `docgarden scan`.
+S12 is now implemented and verified with repo tests plus `docgarden scan`.

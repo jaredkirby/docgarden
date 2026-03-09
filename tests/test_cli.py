@@ -78,6 +78,63 @@ Text.
     return tmp_path
 
 
+def write_exec_plan(repo: Path, rel_path: str, *, include_progress: bool = True) -> None:
+    progress_section = (
+        """
+## Progress
+Text.
+"""
+        if include_progress
+        else ""
+    )
+    write(
+        repo / rel_path,
+        """---
+doc_id: active-plan
+doc_type: exec-plan
+domain: exec-plans
+owner: kirby
+status: draft
+last_reviewed: 2026-03-09
+review_cycle_days: 14
+source_of_truth:
+  - docs/design-docs/docgarden-spec.md
+verification:
+  method: doc-reviewed
+  confidence: medium
+---
+
+# Active Plan
+
+## Purpose
+Text.
+
+## Context
+Text.
+
+## Assumptions
+Text.
+
+## Steps / Milestones
+Text.
+
+## Validation
+Text.
+"""
+        + progress_section
+        + """
+## Discoveries
+Text.
+
+## Decision Log
+Text.
+
+## Outcomes / Retrospective
+Text.
+""",
+    )
+
+
 def init_git_repo(repo: Path) -> None:
     subprocess.run(["git", "init"], cwd=repo, check=True, capture_output=True)
     subprocess.run(
@@ -123,6 +180,98 @@ def test_cli_scan_status_and_plan_commands(tmp_path, monkeypatch, capsys) -> Non
     doctor_output = json.loads(capsys.readouterr().out)
     assert doctor_output["docs_exists"] is True
     assert doctor_output["agents_exists"] is True
+
+
+def test_cli_ci_check_passes_clean_repo(tmp_path, monkeypatch, capsys) -> None:
+    repo = make_repo(tmp_path)
+    monkeypatch.chdir(repo)
+
+    assert main(["scan"]) == 0
+    capsys.readouterr()
+
+    assert main(["ci", "check"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+
+    assert payload["passed"] is True
+    assert payload["failures"] == []
+    assert payload["strict_score"] == 100
+
+
+def test_cli_ci_check_reports_threshold_and_blocking_rules(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    repo = make_repo(tmp_path)
+    write(
+        repo / ".docgarden" / "config.yaml",
+        """repo_name: test-docgarden
+strict_score_fail_threshold: 95
+block_on:
+  - broken_agents_routes
+  - missing_frontmatter_on_canonical
+  - stale_verified_canonical_docs
+  - active_exec_plan_missing_progress
+""",
+    )
+    write(
+        repo / "AGENTS.md",
+        "# AGENTS.md\n\n- Overview: docs/index.md\n- Broken route: docs/missing.md\n",
+    )
+    write(
+        repo / "docs" / "index.md",
+        CANONICAL_FRONTMATTER.replace("2026-03-08", "2025-01-01")
+        + """
+# Docs Index
+
+## Purpose
+Text.
+
+## Scope
+Text.
+
+## Source of Truth
+Text.
+
+## Rules / Definitions
+Text.
+
+## Exceptions / Caveats
+Text.
+
+## Validation / How to verify
+Text.
+
+## Related docs
+Text.
+""",
+    )
+    write(repo / "docs" / "missing-frontmatter.md", "# Missing Frontmatter\n")
+    write_exec_plan(
+        repo,
+        "docs/exec-plans/active/2026-03-09-missing-progress.md",
+        include_progress=False,
+    )
+    monkeypatch.chdir(repo)
+
+    assert main(["scan"]) == 0
+    capsys.readouterr()
+
+    assert main(["ci", "check"]) == 2
+    payload = json.loads(capsys.readouterr().out)
+
+    assert payload["passed"] is False
+    failure_types = {item["type"] for item in payload["failures"]}
+    assert "strict_score_fail_threshold" in failure_types
+    blocking_rules = {
+        item["rule"]
+        for item in payload["failures"]
+        if item["type"] == "blocking_rule"
+    }
+    assert blocking_rules == {
+        "broken_agents_routes",
+        "missing_frontmatter_on_canonical",
+        "stale_verified_canonical_docs",
+        "active_exec_plan_missing_progress",
+    }
 
 
 def test_cli_review_prepare_and_import_commands(tmp_path, monkeypatch, capsys) -> None:

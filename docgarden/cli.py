@@ -4,6 +4,7 @@ import argparse
 import sys
 
 from .cli_commands import (
+    command_ci_check,
     command_config_show,
     command_doctor,
     command_fix_safe,
@@ -67,6 +68,17 @@ def build_parser() -> argparse.ArgumentParser:
 
     status = subparsers.add_parser("status")
     status.set_defaults(func=command_status)
+
+    ci = subparsers.add_parser(
+        "ci",
+        help="CI-friendly enforcement helpers backed by persisted docgarden state.",
+    )
+    ci_subparsers = ci.add_subparsers(dest="ci_command", required=True)
+    ci_check = ci_subparsers.add_parser(
+        "check",
+        help="Fail cleanly when the configured score threshold or block-on rules trip.",
+    )
+    ci_check.set_defaults(func=command_ci_check)
 
     next_cmd = subparsers.add_parser("next")
     next_cmd.set_defaults(func=command_next)
