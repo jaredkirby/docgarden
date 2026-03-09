@@ -21,9 +21,11 @@ SCORE_RELEVANT_FINDING_STATUSES = frozenset(
 AUTO_RESOLVED_FINDING_STATUSES = frozenset(
     {"open", "in_progress", "accepted_debt", "needs_human"}
 )
-RESOLVED_FINDING_STATUSES = frozenset(
-    {"fixed", "accepted_debt", "needs_human", "false_positive"}
+REOPENED_ON_OBSERVATION_STATUSES = frozenset({"fixed", "false_positive"})
+ATTESTATION_REQUIRED_FINDING_STATUSES = frozenset(
+    {"accepted_debt", "needs_human", "false_positive"}
 )
+RESOLVED_FINDING_STATUSES = frozenset({"fixed", "accepted_debt", "false_positive"})
 
 
 def _optional_string(value: Any) -> str | None:

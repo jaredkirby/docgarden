@@ -426,8 +426,121 @@ def test_append_finding_status_event_supports_additional_statuses(tmp_path) -> N
     )
 
     assert in_progress["resolved_at"] is None
-    assert needs_human["resolved_at"] == "2026-03-08T12:30:00"
+    assert needs_human["resolved_at"] is None
     assert false_positive["resolved_at"] == "2026-03-08T12:45:00"
+
+
+def test_append_finding_status_event_requires_attestation_for_non_trivial_states(
+    tmp_path,
+) -> None:
+    state_dir = tmp_path / ".docgarden"
+    ensure_state_dirs(state_dir)
+    findings_path = state_dir / "findings.jsonl"
+
+    context = FindingContext(
+        rel_path="docs/index.md",
+        domain="docs",
+        discovered_at="2026-03-08T12:00:00",
+    )
+    finding = Finding.open_issue(
+        context,
+        kind="missing-sections",
+        severity="medium",
+        summary="Missing headings.",
+        evidence=["Missing headings: Scope"],
+        recommended_action="Add the missing section.",
+        safe_to_autofix=True,
+        cluster="structure-gaps",
+        suffix="sections",
+    )
+    append_scan_events(findings_path, [finding], datetime(2026, 3, 8, 12, 0, 0))
+
+    for status in ("accepted_debt", "needs_human", "false_positive"):
+        try:
+            append_finding_status_event(
+                findings_path,
+                finding.id,
+                status=status,
+                event_at=datetime(2026, 3, 8, 12, 30, 0),
+            )
+        except StateError as exc:
+            assert str(exc) == f"Status {status} requires a non-empty attestation."
+        else:
+            raise AssertionError(f"Expected attestation validation for {status}.")
+
+
+def test_reobserved_fixed_finding_reopens_with_clean_resolution_metadata(
+    tmp_path,
+) -> None:
+    state_dir = tmp_path / ".docgarden"
+    ensure_state_dirs(state_dir)
+    findings_path = state_dir / "findings.jsonl"
+
+    context = FindingContext(
+        rel_path="docs/index.md",
+        domain="docs",
+        discovered_at="2026-03-08T12:00:00",
+    )
+    finding = Finding.open_issue(
+        context,
+        kind="missing-sections",
+        severity="medium",
+        summary="Missing headings.",
+        evidence=["Missing headings: Scope"],
+        recommended_action="Add the missing section.",
+        safe_to_autofix=True,
+        cluster="structure-gaps",
+        suffix="sections",
+    )
+
+    append_scan_events(findings_path, [finding], datetime(2026, 3, 8, 12, 0, 0))
+    append_scan_events(findings_path, [], datetime(2026, 3, 8, 13, 0, 0))
+    latest = append_scan_events(findings_path, [finding], datetime(2026, 3, 8, 14, 0, 0))
+
+    assert latest[finding.id]["status"] == "open"
+    assert latest[finding.id]["event"] == "observed"
+    assert latest[finding.id]["resolved_at"] is None
+    assert latest[finding.id]["attestation"] is None
+    assert latest[finding.id]["resolved_by"] is None
+    assert latest[finding.id]["resolution_note"] is None
+
+
+def test_reobserved_false_positive_finding_reopens(tmp_path) -> None:
+    state_dir = tmp_path / ".docgarden"
+    ensure_state_dirs(state_dir)
+    findings_path = state_dir / "findings.jsonl"
+
+    context = FindingContext(
+        rel_path="docs/index.md",
+        domain="docs",
+        discovered_at="2026-03-08T12:00:00",
+    )
+    finding = Finding.open_issue(
+        context,
+        kind="missing-sections",
+        severity="medium",
+        summary="Missing headings.",
+        evidence=["Missing headings: Scope"],
+        recommended_action="Add the missing section.",
+        safe_to_autofix=True,
+        cluster="structure-gaps",
+        suffix="sections",
+    )
+
+    append_scan_events(findings_path, [finding], datetime(2026, 3, 8, 12, 0, 0))
+    append_finding_status_event(
+        findings_path,
+        finding.id,
+        status="false_positive",
+        event_at=datetime(2026, 3, 8, 13, 0, 0),
+        attestation="Scanner reproduced locally and confirmed this is a false alarm.",
+        resolved_by="kirby",
+    )
+    latest = append_scan_events(findings_path, [finding], datetime(2026, 3, 8, 14, 0, 0))
+
+    assert latest[finding.id]["status"] == "open"
+    assert latest[finding.id]["resolved_at"] is None
+    assert latest[finding.id]["attestation"] is None
 
 
 def test_write_quality_score_updates_existing_frontmatter(tmp_path) -> None:

@@ -13,8 +13,10 @@ from .errors import StateError
 from .files import atomic_write_text
 from .models import (
     ACTIONABLE_FINDING_STATUSES,
+    ATTESTATION_REQUIRED_FINDING_STATUSES,
     AUTO_RESOLVED_FINDING_STATUSES,
     FINDING_STATUSES,
+    REOPENED_ON_OBSERVATION_STATUSES,
     RESOLVED_FINDING_STATUSES,
     SCORE_RELEVANT_FINDING_STATUSES,
     Finding,
@@ -161,10 +163,15 @@ def append_scan_events(
     for finding in active_findings:
         prior = latest.get(finding.id, {})
         payload = asdict(finding)
-        payload["status"] = prior.get("status", finding.status)
-        for field in RESOLUTION_METADATA_FIELDS:
-            if payload.get(field) is None and prior.get(field) is not None:
-                payload[field] = prior[field]
+        if prior.get("status") in REOPENED_ON_OBSERVATION_STATUSES:
+            payload["status"] = finding.status
+            for field in RESOLUTION_METADATA_FIELDS:
+                payload[field] = None
+        else:
+            payload["status"] = prior.get("status", finding.status)
+            for field in RESOLUTION_METADATA_FIELDS:
+                if payload.get(field) is None and prior.get(field) is not None:
+                    payload[field] = prior[field]
         payload["event"] = "observed"
         payload["event_at"] = scan_timestamp
         lines.append(json.dumps(payload, sort_keys=True))
@@ -202,6 +209,11 @@ def append_finding_status_event(
 ) -> dict[str, Any]:
     if status not in FINDING_STATUSES:
         raise StateError(f"Unsupported finding status: {status}.")
+    if (
+        status in ATTESTATION_REQUIRED_FINDING_STATUSES
+        and not (attestation and attestation.strip())
+    ):
+        raise StateError(f"Status {status} requires a non-empty attestation.")
 
     latest = latest_events_by_id(load_findings_history(findings_path))
     prior = latest.get(finding_id)
