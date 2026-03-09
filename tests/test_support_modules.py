@@ -13,6 +13,7 @@ from docgarden.scan_alignment import (
     extract_validation_commands,
     is_supported_docgarden_command,
     resolve_repo_artifact,
+    stable_suffix,
 )
 from docgarden.scan_document_rules import missing_frontmatter_finding
 from docgarden.scan_linkage import collect_domain_doc_counts, repo_relative_path
@@ -132,6 +133,9 @@ def test_alignment_helpers_handle_repo_artifacts_and_commands(tmp_path) -> None:
 
     assert resolve_repo_artifact(repo, "pyproject.toml") == repo / "pyproject.toml"
     assert resolve_repo_artifact(repo, "docs/index.md") == repo / "docs" / "index.md"
+    assert resolve_repo_artifact(repo, "scripts/check.sh") == repo / "scripts" / "check.sh"
+    assert resolve_repo_artifact(repo, "data/schema.csv") == repo / "data" / "schema.csv"
+    assert resolve_repo_artifact(repo, "Makefile") == repo / "Makefile"
     assert resolve_repo_artifact(repo, "implementation linked") is None
 
     commands = extract_validation_commands(
@@ -140,15 +144,26 @@ def test_alignment_helpers_handle_repo_artifacts_and_commands(tmp_path) -> None:
 
 - `docgarden scan`
 
+### Commands
+
+- `docgarden review prepare`
+
 ```bash
 uv run docgarden quality write
 ```
 """
     )
-    assert commands == ["docgarden scan", "uv run docgarden quality write"]
+    assert commands == [
+        "docgarden review prepare",
+        "docgarden scan",
+        "uv run docgarden quality write",
+    ]
     assert is_supported_docgarden_command("docgarden scan") is True
     assert is_supported_docgarden_command("python -m docgarden.cli quality write") is True
     assert is_supported_docgarden_command("docgarden review prepare") is False
+    assert stable_suffix("source", "scripts/missing.py") == (
+        "source-scripts-missing-py-0ea0f4190a"
+    )
 
 
 def test_active_findings_from_latest_events_supports_legacy_history_payloads() -> None:

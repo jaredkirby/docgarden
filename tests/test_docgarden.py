@@ -137,6 +137,192 @@ Text.
         self.assertIn("## Scope", content)
         self.assertIn("## Validation / How to verify", content)
 
+    def test_scan_flags_missing_source_of_truth_artifact(self) -> None:
+        repo = self.make_repo()
+        write(
+            repo / "docs" / "index.md",
+            CANONICAL_FRONTMATTER.replace("- AGENTS.md", "- scripts/missing.sh")
+            + """
+# Docs Index
+
+## Purpose
+Text.
+
+## Scope
+Text.
+
+## Source of Truth
+Text.
+
+## Rules / Definitions
+Text.
+
+## Exceptions / Caveats
+Text.
+
+## Validation / How to verify
+Text.
+
+## Related docs
+Text.
+""",
+        )
+
+        findings, _, _ = scan_repo(repo)
+
+        self.assertEqual([item.kind for item in findings], ["missing-source-artifact"])
+        self.assertEqual(
+            findings[0].id,
+            "missing-source-artifact::docs::index.md::"
+            "source-scripts-missing-sh-0d86f33576",
+        )
+
+    def test_scan_flags_invalid_docgarden_validation_command(self) -> None:
+        repo = self.make_repo()
+        write(
+            repo / "docs" / "index.md",
+            CANONICAL_FRONTMATTER
+            + """
+# Docs Index
+
+## Purpose
+Text.
+
+## Scope
+Text.
+
+## Source of Truth
+Text.
+
+## Rules / Definitions
+Text.
+
+## Exceptions / Caveats
+Text.
+
+## Validation / How to verify
+
+- `docgarden review prepare`
+
+## Related docs
+Text.
+""",
+        )
+
+        findings, _, _ = scan_repo(repo)
+
+        self.assertEqual([item.kind for item in findings], ["invalid-validation-command"])
+        self.assertEqual(
+            findings[0].id,
+            "invalid-validation-command::docs::index.md::"
+            "command-docgarden-review-prepare-a6b2277df6",
+        )
+
+    def test_scan_flags_invalid_docgarden_validation_command_in_subheading(self) -> None:
+        repo = self.make_repo()
+        write(
+            repo / "docs" / "index.md",
+            CANONICAL_FRONTMATTER
+            + """
+# Docs Index
+
+## Purpose
+Text.
+
+## Scope
+Text.
+
+## Source of Truth
+Text.
+
+## Rules / Definitions
+Text.
+
+## Exceptions / Caveats
+Text.
+
+## Validation / How to verify
+
+### Commands
+
+- `docgarden review prepare`
+
+## Related docs
+Text.
+""",
+        )
+
+        findings, _, _ = scan_repo(repo)
+
+        self.assertEqual([item.kind for item in findings], ["invalid-validation-command"])
+
+    def test_scan_skips_alignment_checks_for_draft_docs(self) -> None:
+        repo = self.make_repo()
+        write(
+            repo / "docs" / "proposal.md",
+            CANONICAL_FRONTMATTER.replace("doc_id: docs-index", "doc_id: proposal-doc")
+            .replace("status: verified", "status: draft")
+            .replace("- AGENTS.md", "- scripts/future.py")
+            + """
+# Proposal
+
+## Purpose
+Text.
+
+## Scope
+Text.
+
+## Source of Truth
+Text.
+
+## Rules / Definitions
+Text.
+
+## Exceptions / Caveats
+Text.
+
+## Validation / How to verify
+
+- `docgarden review prepare --domains docs`
+
+## Related docs
+Text.
+""",
+        )
+        write(
+            repo / "docs" / "index.md",
+            CANONICAL_FRONTMATTER
+            + """
+# Docs Index
+
+## Purpose
+Text.
+
+## Scope
+Text.
+
+## Source of Truth
+Text.
+
+## Rules / Definitions
+Text.
+
+## Exceptions / Caveats
+Text.
+
+## Validation / How to verify
+Text.
+
+## Related docs
+
+- [Proposal](proposal.md)
+""",
+        )
+
+        findings, _, _ = scan_repo(repo)
+
+        self.assertEqual(findings, [])
+
 
 if __name__ == "__main__":
     unittest.main()

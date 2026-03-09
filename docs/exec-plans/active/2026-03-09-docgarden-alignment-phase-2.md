@@ -67,6 +67,9 @@ planning, and stronger routing for durable design docs.
 - 2026-03-09: Verified the S01 alignment slice with targeted tests and added the
   initial S02 finding lifecycle state model for richer statuses and
   attestation-ready metadata.
+- 2026-03-09: Tightened S01 so alignment finding IDs are deterministic,
+  Validation subheadings are scanned correctly, and repo-local artifact checks
+  cover common non-URL file targets beyond the initial suffix allowlist.
 
 ## Discoveries
 
@@ -77,6 +80,11 @@ planning, and stronger routing for durable design docs.
 - Scoring has to derive from the latest persisted finding state, not just the
   raw detector output, or statuses like `accepted_debt` never affect
   `overall_score`.
+- The alignment slice needs deterministic finding suffixes because plan order,
+  append-only history, and later resolution events all key off stable IDs.
+- Validation blocks commonly use nested headings, so section parsing has to stop
+  only at the next sibling-or-parent heading instead of the next heading of any
+  depth.
 
 ## Decision Log
 
@@ -89,6 +97,9 @@ planning, and stronger routing for durable design docs.
 - 2026-03-09: Preserve append-only findings history by writing manual status
   changes as new JSONL events and carrying their resolution metadata forward on
   later observation events instead of mutating old lines.
+- 2026-03-09: Generate alignment finding suffixes from deterministic slugs plus
+  a stable digest instead of Python runtime hashes, and treat ordinary repo file
+  paths like `scripts/check.sh` and `Makefile` as eligible local artifacts.
 
 ## Outcomes / Retrospective
 
