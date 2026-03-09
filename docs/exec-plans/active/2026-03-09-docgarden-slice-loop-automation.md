@@ -72,6 +72,9 @@ inside `docgarden`.
 - 2026-03-09: Added configurable path resolution for the slice backlog, spec, exec plan, and artifact directory so other project repos can use the loop without copying this repo’s exact docs layout.
 - 2026-03-09: Added a default per-agent timeout for `docgarden slices run`, persisted partial stdout/stderr on timeout or nonzero exit, and covered those failure paths with regression tests after the first live run reproduced a stuck `codex exec` child process.
 - 2026-03-09: Sanitized parent `CODEX_*` session-control environment variables before spawning nested `codex exec` worker/reviewer runs, which let the first live temp-repo verification progress into real file reads and tool use instead of stalling before structured output.
+- 2026-03-09: Reproduced the next live failure mode from the operator skill: nested `codex exec` runs inherited global MCP startup and a network-disabled child sandbox, which combined into macOS `system-configuration` proxy panics and API DNS failures before the worker could return structured JSON.
+- 2026-03-09: Updated nested worker/reviewer launches to run as ephemeral sessions, disable the repo-unrelated default MCP servers, and enable child workspace-write network access so `docgarden slices run` can reach the Codex API without tripping the local MCP/proxy startup path.
+- 2026-03-09: Tightened worker/reviewer prompts to say explicitly that slice implementation and review should happen directly rather than recursively using the `docgarden-slice-orchestrator` operator skill.
 
 ## Discoveries
 
@@ -83,6 +86,9 @@ inside `docgarden`.
 - The first live exercise surfaced a gap that mocked tests missed: if `codex exec` panics or stalls after launch, a plain `subprocess.run(...)` without a timeout can hang the whole orchestration loop indefinitely.
 - Operators still need logs when an agent launch goes bad, so stdout/stderr persistence cannot wait until a successful subprocess return; timeout and error paths need to flush partial streams too.
 - Running `docgarden slices run` from inside an existing Codex session adds another failure mode: the spawned child inherits parent `CODEX_*` sandbox/thread environment variables unless the runner strips them explicitly.
+- The next live smoke test showed a second integration seam that mocks missed: even a healthy nested `codex exec` can fail before the model call if it boots the operator’s configured MCP servers, because those startup HTTP clients may still hit macOS proxy discovery.
+- Nested worker/reviewer runs also need explicit child-sandbox network access; otherwise they can start cleanly and still fail every API websocket connection with DNS lookup errors while the outer session appears healthy.
+- Prompt wording matters for repos that publish operator skills: if the worker prompt sounds like “run the slice loop” instead of “implement the code,” the child agent can recursively choose the orchestration skill and spend time on the wrong job.
 
 ## Decision Log
 
@@ -94,6 +100,7 @@ inside `docgarden`.
 - 2026-03-09: Add a default 300-second timeout per worker/reviewer `codex exec` invocation and allow `--agent-timeout-seconds 0` to disable it, so the loop fails fast instead of silently hanging behind a bad child process.
 - 2026-03-09: Persist partial stdout/stderr before raising timeout or nonzero-exit errors, so the artifact directory remains inspectable even when the agent process never produces structured JSON.
 - 2026-03-09: Strip inherited `CODEX_CI`, `CODEX_SANDBOX`, `CODEX_SANDBOX_NETWORK_DISABLED`, and `CODEX_THREAD_ID` from nested worker/reviewer launches, because those describe the parent Codex session rather than the child run we want `docgarden` to start.
+- 2026-03-09: Launch nested worker/reviewer agents with `--ephemeral`, disable the configured `pencil` and `openaiDeveloperDocs` MCP servers by default, and override `sandbox_workspace_write.network_access=true` so the child Codex process starts with only the capabilities this slice loop actually needs.
 
 ## Outcomes / Retrospective
 

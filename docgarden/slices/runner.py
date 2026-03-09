@@ -27,6 +27,16 @@ CODEX_ENV_DENYLIST = {
     "CODEX_THREAD_ID",
 }
 
+DEFAULT_CODEX_EXEC_ARGS = (
+    "--ephemeral",
+    "-c",
+    "mcp_servers.pencil.enabled=false",
+    "-c",
+    "mcp_servers.openaiDeveloperDocs.enabled=false",
+    "-c",
+    "sandbox_workspace_write.network_access=true",
+)
+
 
 @dataclass(slots=True)
 class AgentRunArtifact:
@@ -245,6 +255,7 @@ def _run_codex_agent(
         "--output-last-message",
         str(output_path),
     ]
+    command.extend(DEFAULT_CODEX_EXEC_ARGS)
     if model:
         command.extend(["--model", model])
     command.extend(codex_args)

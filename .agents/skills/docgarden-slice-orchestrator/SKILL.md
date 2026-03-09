@@ -106,6 +106,9 @@ uv run docgarden slices review-prompt \
   In other repos, prefer the explicit `--catalog-path` you were given.
   Do not infer the next slice from a manually maintained prompt pack if it
   disagrees with the backlog.
+- The built-in loop launches isolated nested `codex exec` runs. It should not
+  depend on your global MCP server list or an existing Codex session state to
+  make worker/reviewer progress.
 - Prefer `uv run docgarden ...` over invoking installed console scripts
   directly, so the repo-local package version is used.
 - Keep the loop bounded unless the user explicitly wants continuous advancement.

@@ -120,6 +120,7 @@ def build_implementation_prompt(
                 if next_slice is not None
                 else "- keep this slice tight; do not jump ahead into later queued slices"
             ),
+            "- implement the code changes directly; do not run `docgarden slices` commands or use the `docgarden-slice-orchestrator` skill inside this worker",
             "- do not revert unrelated user changes",
             "- if the worktree is dirty, work around unrelated edits and commit only the files you touched",
             "",
@@ -208,6 +209,9 @@ def build_review_prompt(
             ),
             "5. Are the tests, docs, and operator-facing messages sufficient for repeatable use?",
             "6. Are the findings and revision directions specific enough for a worker agent to act on directly?",
+            "",
+            "Review guardrails:",
+            "- review the slice implementation directly; do not run `docgarden slices` commands or use the `docgarden-slice-orchestrator` skill inside this reviewer",
             "",
             "Deliverable:",
             "- findings first, ordered by severity",

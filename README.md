@@ -113,10 +113,11 @@ default. Use `--agent-timeout-seconds 0` to disable that guardrail. When a
 Codex run times out or exits nonzero, `docgarden` still writes whatever
 stdout/stderr it captured to the current `.docgarden/slice-loops/...` run
 directory before failing, so operators have something concrete to inspect.
-Nested runs also strip parent `CODEX_*` session-control environment variables
-before spawning worker or reviewer agents, so running the loop from inside an
-existing Codex session does not leak the parent sandbox/thread state into the
-child process.
+Nested runs also strip parent `CODEX_*` session-control environment variables,
+start as ephemeral one-shot sessions, disable repo-unrelated MCP servers by
+default, and explicitly enable network access inside the child workspace-write
+sandbox so the worker or reviewer can reach the Codex API without inheriting
+the parent session’s tool startup or sandbox state.
 
 For other repos, the `slices` CLI also accepts path overrides such as
 `--catalog-path`, `--spec-path`, `--plan-path`, `--artifacts-dir`, and

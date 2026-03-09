@@ -210,6 +210,8 @@ def test_cli_slices_prompt_commands_render_current_slice_context(
     kickoff = capsys.readouterr().out
     assert "Your target slice is S07" in kickoff
     assert "do not jump ahead into S08" in kickoff
+    assert "do not run `docgarden slices` commands" in kickoff
+    assert "`docgarden-slice-orchestrator` skill" in kickoff
 
     assert (
         main(
@@ -233,6 +235,8 @@ def test_cli_slices_prompt_commands_render_current_slice_context(
     assert str(worker_output) in review_prompt
     assert str(review_output) in review_prompt
     assert "this is a follow-up review after revision work" in review_prompt
+    assert "Review guardrails:" in review_prompt
+    assert "do not run `docgarden slices` commands" in review_prompt
 
 
 def test_cli_slices_kickoff_prompt_supports_custom_paths(
@@ -339,6 +343,11 @@ def test_cli_slices_run_revises_then_advances_to_next_slice(
         assert "CODEX_SANDBOX" not in env
         assert "CODEX_SANDBOX_NETWORK_DISABLED" not in env
         assert "CODEX_THREAD_ID" not in env
+        assert "--ephemeral" in cmd
+        assert "-c" in cmd
+        assert "mcp_servers.pencil.enabled=false" in cmd
+        assert "mcp_servers.openaiDeveloperDocs.enabled=false" in cmd
+        assert "sandbox_workspace_write.network_access=true" in cmd
         output_path = Path(cmd[cmd.index("--output-last-message") + 1])
         payload = next(responses)
         output_path.write_text(json.dumps(payload), encoding="utf-8")
@@ -375,6 +384,10 @@ def test_cli_slices_run_times_out_and_persists_partial_logs(
 
     def fake_run(cmd, cwd, input, text, capture_output, check, timeout, env):
         assert env is not None
+        assert "--ephemeral" in cmd
+        assert "mcp_servers.pencil.enabled=false" in cmd
+        assert "mcp_servers.openaiDeveloperDocs.enabled=false" in cmd
+        assert "sandbox_workspace_write.network_access=true" in cmd
         raise subprocess.TimeoutExpired(
             cmd=cmd,
             timeout=timeout,
@@ -407,6 +420,10 @@ def test_cli_slices_run_nonzero_exit_persists_logs(tmp_path, monkeypatch, capsys
     def fake_run(cmd, cwd, input, text, capture_output, check, timeout, env):
         assert timeout == 300
         assert env is not None
+        assert "--ephemeral" in cmd
+        assert "mcp_servers.pencil.enabled=false" in cmd
+        assert "mcp_servers.openaiDeveloperDocs.enabled=false" in cmd
+        assert "sandbox_workspace_write.network_access=true" in cmd
         return subprocess.CompletedProcess(cmd, 17, "agent stdout\n", "agent stderr\n")
 
     monkeypatch.setattr("docgarden.slices.runner.subprocess.run", fake_run)
