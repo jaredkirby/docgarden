@@ -74,7 +74,7 @@ criteria rather than re-explaining the whole product vision.
 | S07 | completed | Workflow drift detector | S01 |
 | S08 | completed | Routing quality detector for stale targets | S01 |
 | S09 | completed | Score trend and weighted domain rollups | S02 |
-| S10 | queued | Review packet preparation and import | S02, S03 |
+| S10 | completed | Review packet preparation and import | S02, S03 |
 | S11 | queued | Safe autofix expansion | S07, S08 |
 | S12 | queued | CI enforcement and scheduled automation | S03, S09, S11 |
 | S13 | blocked | Draft PR / issue automation | S12 |
@@ -110,6 +110,11 @@ The repo has also completed the first six generic Phase 2 slices:
 - score state trend summaries that persist across scans, configurable
   domain-weighted rollups, and separate critical-domain regression reporting so
   `score.json` and `QUALITY_SCORE.md` show both weighted and raw domain scores
+- deterministic `docgarden review prepare` packets that capture targeted docs
+  plus current mechanical context without baking in runner-specific prompts
+- strict `docgarden review import` ingestion that stores review payloads under
+  `.docgarden/reviews/`, appends subjective findings with provenance, and keeps
+  them separate from mechanical scan observations during later rescans
 
 ## Atomic slices
 
@@ -343,7 +348,7 @@ Acceptance:
 
 ### S10: Review packet preparation and import
 
-Status: `queued`
+Status: `completed`
 
 Goal:
 - Create the first subjective-review pathway without coupling it tightly to one

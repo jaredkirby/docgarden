@@ -125,6 +125,54 @@ def test_cli_scan_status_and_plan_commands(tmp_path, monkeypatch, capsys) -> Non
     assert doctor_output["agents_exists"] is True
 
 
+def test_cli_review_prepare_and_import_commands(tmp_path, monkeypatch, capsys) -> None:
+    repo = make_repo(tmp_path)
+    monkeypatch.chdir(repo)
+
+    assert main(["review", "prepare", "--domains", "docs"]) == 0
+    prepare_output = json.loads(capsys.readouterr().out)
+    packet_path = Path(prepare_output["path"])
+
+    assert prepare_output["domains"] == ["docs"]
+    assert prepare_output["documents"] == ["docs/index.md"]
+    assert packet_path.exists()
+
+    import_path = repo / "review.json"
+    import_path.write_text(
+        json.dumps(
+            {
+                "packet_id": prepare_output["packet_id"],
+                "review_id": "docs-review",
+                "provenance": {"runner": "manual", "reviewer": "kirby"},
+                "findings": [
+                    {
+                        "id": "clarify-purpose",
+                        "summary": "The purpose section is too terse.",
+                        "severity": "medium",
+                        "files": ["docs/index.md"],
+                        "evidence": ["The Purpose section only says `Text.`"],
+                        "recommended_action": "Describe the contract for readers.",
+                        "confidence": "high",
+                    }
+                ],
+            },
+            indent=2,
+        )
+        + "\n"
+    )
+
+    assert main(["review", "import", str(import_path)]) == 0
+    import_output = json.loads(capsys.readouterr().out)
+
+    assert import_output["review_id"] == "docs-review"
+    assert import_output["packet_id"] == prepare_output["packet_id"]
+    assert len(import_output["finding_ids"]) == 1
+    assert Path(import_output["stored_review"]).exists()
+    latest = load_findings_history(repo_paths(repo).findings)
+    assert latest[-1]["finding_source"] == "subjective_review"
+    assert latest[-1]["event"] == "review_imported"
+
+
 def test_cli_scan_changed_scope_uses_git_state_and_keeps_full_scan_state(
     tmp_path, monkeypatch, capsys
 ) -> None:

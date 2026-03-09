@@ -90,6 +90,9 @@ spec sections to PR-sized implementation units.
 - 2026-03-09: Implemented S09 score trend persistence so full scans now append compact trend points in `score.json` instead of replacing change-over-time context each run.
 - 2026-03-09: Added configurable `domain_weights` rollups plus critical-domain regression summaries driven by `.docgarden/config.yaml`, and surfaced the weighted rollup alongside raw domain scores in `QUALITY_SCORE.md`.
 - 2026-03-09: Added regression coverage for legacy `score.json` loading, weighted rollup calculation, persisted trend history across scans, and critical-domain drift reporting.
+- 2026-03-09: Implemented S10 review packet export with deterministic packet IDs, stable file payloads under `.docgarden/reviews/`, and optional domain targeting through `docgarden review prepare --domains ...`.
+- 2026-03-09: Implemented S10 review import with strict packet-backed validation, persisted stored review payloads under `.docgarden/reviews/`, and append-only subjective findings that retain provenance in `findings.jsonl`.
+- 2026-03-09: Kept imported review findings distinct from mechanical scan observations by tagging their source in state and preventing later scans from auto-resolving them when they are absent from mechanical detector output.
 
 ## Discoveries
 
@@ -166,6 +169,15 @@ spec sections to PR-sized implementation units.
 - Critical-domain regressions need their own channel in both `score.json` and
   `QUALITY_SCORE.md`; otherwise a small overall drift can hide a sharper drop in
   a domain the repo considers operationally sensitive.
+- Review packets are only reproducible if the exported payload strips volatile
+  fields like scan timestamps; raw mechanical finding context needs a stable
+  serialization subset instead of a full `Finding` dump.
+- Imported subjective findings need their own source marker in the append-only
+  history; otherwise the existing scan loop interprets them as missing
+  mechanical findings and auto-resolves them on the next full scan.
+- Packet-backed import validation is a useful trust boundary: it keeps review
+  files honest by rejecting findings that mention files outside the prepared
+  scope or packet IDs that were never exported locally.
 
 ## Decision Log
 
@@ -221,7 +233,16 @@ spec sections to PR-sized implementation units.
 - 2026-03-09: Treat `domain_weights` as config-driven optional overrides with a
   default weight of `1` per domain, and keep raw domain scores visible in the
   markdown report so the weighted rollup cannot hide weaker areas.
+- 2026-03-09: Model S10 review packets as deterministic JSON artifacts stored
+  under `.docgarden/reviews/`, with optional domain filtering but no runner-
+  specific prompt contract baked into the packet schema.
+- 2026-03-09: Require `docgarden review import` payloads to reference a locally
+  stored packet and validate file scope against that packet before any review
+  state or findings history is written.
+- 2026-03-09: Persist imported findings inside `findings.jsonl` with
+  `finding_source: subjective_review` and provenance metadata so queue commands
+  can act on them without letting future mechanical scans auto-resolve them.
 
 ## Outcomes / Retrospective
 
-Pending verification and future use by implementation work.
+S10 is now implemented and verified with repo tests plus `docgarden scan`.

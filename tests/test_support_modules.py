@@ -30,11 +30,13 @@ from docgarden.state import (
     append_scan_events,
     build_plan,
     ensure_state_dirs,
+    import_review,
     latest_events_by_id,
     load_findings_history,
     load_plan,
     load_score,
     ordered_active_events,
+    prepare_review_packet,
     record_plan_resolution,
     record_plan_triage_stage,
     reopen_plan_finding,
@@ -174,7 +176,9 @@ uv run docgarden quality write
     ]
     assert is_supported_docgarden_command("docgarden scan") is True
     assert is_supported_docgarden_command("python -m docgarden.cli quality write") is True
-    assert is_supported_docgarden_command("docgarden review prepare") is False
+    assert is_supported_docgarden_command("docgarden review prepare") is True
+    assert is_supported_docgarden_command("docgarden review prepare --domains docs,metrics") is True
+    assert is_supported_docgarden_command("docgarden review import review.json") is True
     assert stable_suffix("source", "scripts/missing.py") == (
         "source-scripts-missing-py-0ea0f4190a"
     )
@@ -1015,6 +1019,302 @@ def test_reobserved_false_positive_finding_reopens(tmp_path) -> None:
     assert latest[finding.id]["status"] == "open"
     assert latest[finding.id]["resolved_at"] is None
     assert latest[finding.id]["attestation"] is None
+
+
+def test_prepare_review_packet_is_reproducible_and_scope_filtered(tmp_path) -> None:
+    repo = tmp_path
+    write(repo / "AGENTS.md", "# AGENTS.md\n\n- Overview: docs/index.md\n")
+    write(
+        repo / "docs" / "index.md",
+        """---
+doc_id: docs-index
+doc_type: canonical
+domain: docs
+owner: kirby
+status: verified
+last_reviewed: 2026-03-08
+review_cycle_days: 30
+source_of_truth:
+  - AGENTS.md
+verification:
+  method: doc-reviewed
+  confidence: medium
+---
+
+# Docs Index
+
+## Purpose
+Text.
+
+## Scope
+Text.
+
+## Source of Truth
+Text.
+
+## Rules / Definitions
+Text.
+
+## Exceptions / Caveats
+Text.
+
+## Validation / How to verify
+Text.
+
+## Related docs
+Text.
+""",
+    )
+    write(
+        repo / "docs" / "design-docs" / "plan.md",
+        """---
+doc_id: design-plan
+doc_type: reference
+domain: design-docs
+owner: kirby
+status: verified
+last_reviewed: 2026-03-08
+review_cycle_days: 30
+source_of_truth:
+  - AGENTS.md
+verification:
+  method: doc-reviewed
+  confidence: medium
+---
+
+# Design Plan
+
+## Purpose
+Text.
+
+## Scope
+Text.
+
+## Source of Truth
+Text.
+
+## Rules / Definitions
+Text.
+
+## Exceptions / Caveats
+Text.
+
+## Validation / How to verify
+Text.
+
+## Related docs
+Text.
+""",
+    )
+
+    first_path, first_payload = prepare_review_packet(
+        repo,
+        repo / ".docgarden",
+        domains=["docs"],
+    )
+    second_path, second_payload = prepare_review_packet(
+        repo,
+        repo / ".docgarden",
+        domains=["docs"],
+    )
+
+    assert first_path == second_path
+    assert first_payload["packet_id"] == second_payload["packet_id"]
+    assert first_payload["scope"]["domains"] == ["docs"]
+    assert first_payload["scope"]["documents"] == ["docs/index.md"]
+    assert [item["rel_path"] for item in first_payload["documents"]] == ["docs/index.md"]
+
+
+def test_import_review_persists_subjective_findings_and_updates_plan(tmp_path) -> None:
+    repo = tmp_path
+    state_dir = repo / ".docgarden"
+    ensure_state_dirs(state_dir)
+    write(
+        state_dir / "config.yaml",
+        "repo_name: test-docgarden\nstrict_score_fail_threshold: 70\n",
+    )
+    write(repo / "AGENTS.md", "# AGENTS.md\n\n- Overview: docs/index.md\n")
+    write(
+        repo / "docs" / "index.md",
+        """---
+doc_id: docs-index
+doc_type: canonical
+domain: docs
+owner: kirby
+status: verified
+last_reviewed: 2026-03-08
+review_cycle_days: 30
+source_of_truth:
+  - AGENTS.md
+verification:
+  method: doc-reviewed
+  confidence: medium
+---
+
+# Docs Index
+
+## Purpose
+Text.
+
+## Scope
+Text.
+
+## Source of Truth
+Text.
+
+## Rules / Definitions
+Text.
+
+## Exceptions / Caveats
+Text.
+
+## Validation / How to verify
+Text.
+
+## Related docs
+Text.
+""",
+    )
+
+    packet_path, packet_payload = prepare_review_packet(repo, state_dir, domains=["docs"])
+    import_payload = {
+        "format_version": 1,
+        "packet_id": packet_payload["packet_id"],
+        "review_id": "docs-clarity-pass",
+        "provenance": {"runner": "manual", "reviewer": "kirby"},
+        "findings": [
+            {
+                "id": "ambiguous-summary",
+                "summary": "The purpose section is too vague for operators.",
+                "severity": "medium",
+                "files": ["docs/index.md"],
+                "evidence": ["The Purpose section only says `Text.`"],
+                "recommended_action": "Expand the purpose with the operator-facing contract.",
+                "confidence": "high",
+            }
+        ],
+    }
+    import_path = repo / "review.json"
+    write_json(import_path, import_payload)
+
+    paths = RepoPaths(
+        repo_root=repo,
+        state_dir=state_dir,
+        config=state_dir / "config.yaml",
+        findings=state_dir / "findings.jsonl",
+        plan=state_dir / "plan.json",
+        score=state_dir / "score.json",
+        quality=repo / "docs" / "QUALITY_SCORE.md",
+    )
+
+    stored_review_path, stored_payload, imported_findings, plan = import_review(
+        paths,
+        import_path,
+        imported_at=datetime(2026, 3, 9, 10, 0, 0),
+    )
+    latest = latest_events_by_id(load_findings_history(paths.findings))
+
+    assert packet_path.exists()
+    assert stored_review_path == state_dir / "reviews" / "review-import-docs-clarity-pass.json"
+    assert stored_payload["review_id"] == "docs-clarity-pass"
+    assert len(imported_findings) == 1
+    assert imported_findings[0].finding_source == "subjective_review"
+    assert latest[imported_findings[0].id]["event"] == "review_imported"
+    assert latest[imported_findings[0].id]["provenance"]["packet_id"] == packet_payload["packet_id"]
+    assert plan.current_focus == imported_findings[0].id
+    assert ordered_active_events(paths)[0]["id"] == imported_findings[0].id
+
+    append_scan_events(paths.findings, [], datetime(2026, 3, 9, 11, 0, 0))
+    latest_after_scan = latest_events_by_id(load_findings_history(paths.findings))
+    assert latest_after_scan[imported_findings[0].id]["status"] == "open"
+
+
+def test_import_review_fails_closed_when_file_is_outside_packet(tmp_path) -> None:
+    repo = tmp_path
+    state_dir = repo / ".docgarden"
+    ensure_state_dirs(state_dir)
+    write(
+        state_dir / "config.yaml",
+        "repo_name: test-docgarden\nstrict_score_fail_threshold: 70\n",
+    )
+    write(repo / "AGENTS.md", "# AGENTS.md\n\n- Overview: docs/index.md\n")
+    write(
+        repo / "docs" / "index.md",
+        """---
+doc_id: docs-index
+doc_type: canonical
+domain: docs
+owner: kirby
+status: verified
+last_reviewed: 2026-03-08
+review_cycle_days: 30
+source_of_truth:
+  - AGENTS.md
+verification:
+  method: doc-reviewed
+  confidence: medium
+---
+
+# Docs Index
+
+## Purpose
+Text.
+
+## Scope
+Text.
+
+## Source of Truth
+Text.
+
+## Rules / Definitions
+Text.
+
+## Exceptions / Caveats
+Text.
+
+## Validation / How to verify
+Text.
+
+## Related docs
+Text.
+""",
+    )
+    _, packet_payload = prepare_review_packet(repo, state_dir, domains=["docs"])
+    import_path = repo / "review.json"
+    write_json(
+        import_path,
+        {
+            "packet_id": packet_payload["packet_id"],
+            "provenance": {"runner": "manual"},
+            "findings": [
+                {
+                    "id": "bad-file",
+                    "summary": "Bad import.",
+                    "severity": "low",
+                    "files": ["docs/missing.md"],
+                    "evidence": ["File not in packet."],
+                    "recommended_action": "Fix the payload.",
+                }
+            ],
+        },
+    )
+    paths = RepoPaths(
+        repo_root=repo,
+        state_dir=state_dir,
+        config=state_dir / "config.yaml",
+        findings=state_dir / "findings.jsonl",
+        plan=state_dir / "plan.json",
+        score=state_dir / "score.json",
+        quality=repo / "docs" / "QUALITY_SCORE.md",
+    )
+
+    try:
+        import_review(paths, import_path, imported_at=datetime(2026, 3, 9, 10, 0, 0))
+    except StateError as exc:
+        assert "references files outside packet" in str(exc)
+    else:
+        raise AssertionError("Expected import_review to reject files outside the packet.")
+    assert not paths.findings.exists()
 
 
 def test_write_quality_score_updates_existing_frontmatter(tmp_path) -> None:

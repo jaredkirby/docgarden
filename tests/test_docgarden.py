@@ -392,12 +392,7 @@ Text.
 
         findings, _, _ = scan_repo(repo)
 
-        self.assertEqual([item.kind for item in findings], ["invalid-validation-command"])
-        self.assertEqual(
-            findings[0].id,
-            "invalid-validation-command::docs::index.md::"
-            "command-docgarden-review-prepare-a6b2277df6",
-        )
+        self.assertEqual(findings, [])
 
     def test_scan_distinguishes_broken_and_stale_routes(self) -> None:
         repo = self.make_repo()
@@ -509,7 +504,7 @@ Text.
 
         findings, _, _ = scan_repo(repo)
 
-        self.assertEqual([item.kind for item in findings], ["invalid-validation-command"])
+        self.assertEqual(findings, [])
 
     def test_scan_flags_missing_workflow_asset_reference(self) -> None:
         repo = self.make_repo()

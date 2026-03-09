@@ -14,6 +14,8 @@ from .cli_commands import (
     command_plan_resolve,
     command_plan_triage,
     command_quality_write,
+    command_review_import,
+    command_review_prepare,
     command_scan,
     command_show,
     command_slices_kickoff_prompt,
@@ -68,6 +70,30 @@ def build_parser() -> argparse.ArgumentParser:
 
     next_cmd = subparsers.add_parser("next")
     next_cmd.set_defaults(func=command_next)
+
+    review = subparsers.add_parser("review")
+    review_subparsers = review.add_subparsers(dest="review_command", required=True)
+    review_prepare = review_subparsers.add_parser(
+        "prepare",
+        help="Export a deterministic review packet for targeted subjective review.",
+    )
+    review_prepare.add_argument(
+        "--domains",
+        help=(
+            "Optional comma-separated doc domains to include in the packet. "
+            "Defaults to all docs under `docs/`."
+        ),
+    )
+    review_prepare.set_defaults(func=command_review_prepare)
+    review_import = review_subparsers.add_parser(
+        "import",
+        help="Import structured review findings from a JSON file.",
+    )
+    review_import.add_argument(
+        "file",
+        help="Path to a structured review JSON file that references a prepared packet.",
+    )
+    review_import.set_defaults(func=command_review_import)
 
     plan = subparsers.add_parser("plan")
     plan.set_defaults(func=command_plan)

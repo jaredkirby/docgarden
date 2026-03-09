@@ -14,6 +14,7 @@ FINDING_STATUSES = frozenset(
         "false_positive",
     }
 )
+FINDING_SOURCES = frozenset({"mechanical", "subjective_review"})
 ACTIONABLE_FINDING_STATUSES = frozenset({"open", "in_progress", "needs_human"})
 SCORE_RELEVANT_FINDING_STATUSES = frozenset(
     {"open", "in_progress", "accepted_debt", "needs_human"}
@@ -38,6 +39,9 @@ REOPENABLE_FINDING_STATUSES = frozenset(
 )
 PLAN_LIFECYCLE_STAGES = frozenset({"observe", "reflect", "organize", "complete"})
 TRIAGE_LIFECYCLE_STAGES = ("observe", "reflect", "organize")
+REVIEW_PACKET_FORMAT_VERSION = 1
+REVIEW_FINDING_SEVERITIES = frozenset({"high", "medium", "low"})
+REVIEW_FINDING_CONFIDENCE = frozenset({"high", "medium", "low"})
 
 
 def _optional_string(value: Any) -> str | None:
@@ -95,6 +99,8 @@ class Finding:
     resolved_by: str | None = None
     resolution_note: str | None = None
     resolved_at: str | None = None
+    finding_source: str = "mechanical"
+    provenance: dict[str, Any] = field(default_factory=dict)
     details: dict[str, Any] = field(default_factory=dict)
 
     @classmethod
@@ -126,12 +132,14 @@ class Finding:
             discovered_at=context.discovered_at,
             cluster=cluster,
             confidence=context.confidence,
+            finding_source="mechanical",
             details=details or {},
         )
 
     @classmethod
     def from_dict(cls, payload: dict[str, Any]) -> "Finding":
         details = payload.get("details")
+        provenance = payload.get("provenance")
         return cls(
             id=str(payload["id"]),
             kind=str(payload["kind"]),
@@ -150,6 +158,8 @@ class Finding:
             resolved_by=_optional_string(payload.get("resolved_by")),
             resolution_note=_optional_string(payload.get("resolution_note")),
             resolved_at=_optional_string(payload.get("resolved_at")),
+            finding_source=str(payload.get("finding_source", "mechanical")),
+            provenance=provenance if isinstance(provenance, dict) else {},
             details=details if isinstance(details, dict) else {},
         )
 

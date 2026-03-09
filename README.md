@@ -13,6 +13,8 @@ docgarden scan --scope changed
 docgarden scan --scope changed --files docs/index.md docs/workflows/reporting.md
 docgarden status
 docgarden next
+docgarden review prepare --domains docs,design-docs
+docgarden review import review.json
 docgarden plan
 docgarden plan triage --stage observe --report "root causes and themes"
 docgarden plan triage --stage reflect --report "comparison against recent work"
@@ -68,6 +70,21 @@ docgarden plan triage --stage organize --report "execution order and rationale"
 docgarden plan focus FINDING_ID_OR_CLUSTER
 docgarden plan resolve FINDING_ID --result fixed
 ```
+
+For subjective review prep/import:
+
+```bash
+docgarden review prepare --domains docs
+docgarden review import review.json
+docgarden next
+```
+
+`docgarden review prepare` writes a deterministic packet under
+`.docgarden/reviews/` containing the selected docs plus stable mechanical
+finding context for those files. `docgarden review import` accepts a structured
+JSON payload that references one of those packet IDs, stores the imported
+review under `.docgarden/reviews/`, and appends subjective findings with
+provenance into `findings.jsonl`.
 
 Use `accepted_debt`, `needs_human`, or `false_positive` with
 `docgarden plan resolve` when the outcome is not a straightforward fix. Those
@@ -266,6 +283,8 @@ The repo currently includes:
 - persisted score trend points, configurable domain-weighted rollups, and
   critical-domain regression summaries
 - append-only findings history and a prioritized plan view
+- deterministic review packet export plus strict review import backed by
+  `.docgarden/reviews/`
 - plan triage stages with persisted notes
 - manual queue focus, resolve, and reopen commands
 - read-only changed-scope scans for partial local or CI feedback
@@ -273,4 +292,4 @@ The repo currently includes:
 - a Codex worker/reviewer loop that can continue until a slice is accepted or
   blocked
 
-Next planned slice: review packet preparation and import.
+Next planned slice: safe autofix expansion.

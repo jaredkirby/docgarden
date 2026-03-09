@@ -33,11 +33,13 @@ from .slices import (
 )
 from .state import (
     ensure_state_dirs,
+    import_review,
     load_findings_history,
     load_plan,
     load_score,
     next_active_event,
     ordered_active_events,
+    prepare_review_packet,
     latest_events_by_id,
     record_plan_resolution,
     record_plan_triage_stage,
@@ -135,6 +137,56 @@ def command_next(_: argparse.Namespace) -> None:
         print("No open findings.")
         return
     print(json.dumps(next_item, indent=2))
+
+
+def _parse_domain_args(raw_domains: str | None) -> list[str]:
+    if not raw_domains:
+        return []
+    return [domain.strip() for domain in raw_domains.split(",") if domain.strip()]
+
+
+def command_review_prepare(args: argparse.Namespace) -> None:
+    paths = repo_paths(Path.cwd())
+    packet_path, payload = prepare_review_packet(
+        paths.repo_root,
+        paths.state_dir,
+        domains=_parse_domain_args(args.domains),
+    )
+    print(
+        json.dumps(
+            {
+                "packet_id": payload["packet_id"],
+                "path": str(packet_path),
+                "domains": payload["scope"]["domains"],
+                "documents": payload["scope"]["documents"],
+                "mechanical_findings": len(payload["mechanical_findings"]),
+            },
+            indent=2,
+            sort_keys=True,
+        )
+    )
+
+
+def command_review_import(args: argparse.Namespace) -> None:
+    paths = repo_paths(Path.cwd())
+    stored_review_path, stored_payload, findings, plan = import_review(
+        paths,
+        Path(args.file),
+        imported_at=datetime.now(),
+    )
+    print(
+        json.dumps(
+            {
+                "review_id": stored_payload["review_id"],
+                "packet_id": stored_payload["packet_id"],
+                "stored_review": str(stored_review_path),
+                "finding_ids": [finding.id for finding in findings],
+                "plan": asdict(plan),
+            },
+            indent=2,
+            sort_keys=True,
+        )
+    )
 
 
 def command_plan(_: argparse.Namespace) -> None:

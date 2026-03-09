@@ -446,6 +446,16 @@ def is_supported_docgarden_command(command: str) -> bool:
     rest = args[1:]
     if command_name in {"scan", "status", "next", "plan", "doctor"}:
         return not rest
+    if command_name == "review":
+        if not rest:
+            return False
+        subcommand = rest[0]
+        subrest = rest[1:]
+        if subcommand == "prepare":
+            return _is_supported_review_prepare_args(subrest)
+        if subcommand == "import":
+            return len(subrest) == 1 and not subrest[0].startswith("-")
+        return False
     if command_name == "show":
         return len(rest) == 1 and not rest[0].startswith("-")
     if command_name == "quality":
@@ -455,6 +465,22 @@ def is_supported_docgarden_command(command: str) -> bool:
     if command_name == "config":
         return rest == ["show"]
     return False
+
+
+def _is_supported_review_prepare_args(args: list[str]) -> bool:
+    index = 0
+    while index < len(args):
+        token = args[index]
+        if token.startswith("--domains="):
+            index += 1
+            continue
+        if token == "--domains":
+            if index + 1 >= len(args) or args[index + 1].startswith("-"):
+                return False
+            index += 2
+            continue
+        return False
+    return True
 
 
 def tokenize_command(command: str) -> list[str]:
