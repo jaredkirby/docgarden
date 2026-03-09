@@ -35,6 +35,7 @@ def build_scorecard(
         "duplicate-doc-id": "Structure & metadata",
         "missing-sections": "Coverage",
         "stale-review": "Freshness",
+        "generated-doc-stale": "Freshness",
         "broken-link": "Linking & discoverability",
         "broken-route": "Linking & discoverability",
         "orphan-doc": "Linking & discoverability",
@@ -42,6 +43,7 @@ def build_scorecard(
         "invalid-metadata": "Structure & metadata",
         "missing-source-artifact": "Alignment to artifacts",
         "invalid-validation-command": "Alignment to artifacts",
+        "generated-doc-contract": "Alignment to artifacts",
     }
 
     for finding in findings:

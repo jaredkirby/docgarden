@@ -76,6 +76,9 @@ spec sections to PR-sized implementation units.
 - 2026-03-09: Tightened S05 after review so changed-scope scans do not even create `.docgarden/` on first use, and explicit `--files` inputs now fail fast on missing doc-shaped paths instead of inferring deletions.
 - 2026-03-09: Documented the git-derived changed-set rule in CLI help, scan output notes, and the README so operators can predict which files `--scope changed` will inspect.
 - 2026-03-09: Re-synced the durable prompt pack after S05 landed, promoted the next implementation kickoff to S06, and refreshed the README so the public command overview matches the current queue and scan workflow.
+- 2026-03-09: Implemented S06 generated-doc contract checks so `doc_type: generated` docs now require populated provenance details, not just the documented section headings.
+- 2026-03-09: Added local upstream freshness comparison for generated docs, using the generated timestamp plus local file mtimes to flag stale generated references when the source file is newer.
+- 2026-03-09: Added tests covering missing provenance metadata, stale local upstream files, fresh local upstream files, and graceful skips for remote or non-file upstream references.
 
 ## Discoveries
 
@@ -121,6 +124,11 @@ spec sections to PR-sized implementation units.
 - The README is more useful when it explains both the full-scan source-of-truth
   loop and the narrower changed-scope preview loop; otherwise operators can
   infer the wrong authority from partial-scan commands.
+- Generated-doc headings alone are not enough signal: the scanner needs
+  content-aware provenance checks to catch empty sections and placeholder prose.
+- Local directory paths show up naturally when generated docs describe a source
+  folder rather than a single artifact, so freshness checks need to skip
+  non-file paths instead of claiming the doc is stale.
 
 ## Decision Log
 
@@ -152,6 +160,14 @@ spec sections to PR-sized implementation units.
 - 2026-03-09: Define explicit `--files` as an existing-doc list only; missing
   paths are validation errors, while deleted docs remain discoverable through
   git-derived changed scope.
+- 2026-03-09: Model S06 provenance validation as one aggregated
+  `generated-doc-contract` finding per doc so missing source, timestamp,
+  upstream path, and regeneration command details stay actionable without
+  spamming the queue.
+- 2026-03-09: Only emit generated-doc freshness failures when the upstream
+  reference resolves to an existing local file; remote URLs, descriptive text,
+  directories, and missing local paths degrade to contract checks or skips
+  rather than misleading stale findings.
 
 ## Outcomes / Retrospective
 

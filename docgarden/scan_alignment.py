@@ -3,14 +3,21 @@ from __future__ import annotations
 import hashlib
 import re
 import shlex
+from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 
 from .markdown import Document, normalize_heading
 from .models import Finding, FindingContext
+from .scan_document_rules import (
+    generated_doc_contract_finding,
+    generated_doc_stale_finding,
+)
 
 SECTION_HEADING_RE = re.compile(r"^(#{1,6})\s+(.+?)\s*$", re.MULTILINE)
 INLINE_CODE_RE = re.compile(r"`([^`\n]+)`")
 FENCED_BLOCK_RE = re.compile(r"```(?:bash|sh|shell)?\n(.*?)```", re.DOTALL)
+MARKDOWN_LINK_RE = re.compile(r"\[[^\]]+\]\(([^)]+)\)")
 ROOT_LOCAL_ARTIFACT_NAMES = {
     "AGENTS.md",
     "README.md",
@@ -21,6 +28,17 @@ ROOT_LOCAL_ARTIFACT_NAMES = {
     "Justfile",
     "Procfile",
 }
+GENERATED_SOURCE_HEADING = normalize_heading("Generation source")
+GENERATED_TIMESTAMP_HEADING = normalize_heading("Generated timestamp")
+GENERATED_UPSTREAM_HEADING = normalize_heading("Upstream artifact path or script")
+GENERATED_COMMAND_HEADING = normalize_heading("Regeneration command")
+
+
+@dataclass(slots=True)
+class GeneratedDocContract:
+    issues: list[str]
+    generated_at: datetime | None
+    upstream_path: Path | None
 
 
 def stable_suffix(prefix: str, value: str) -> str:
@@ -38,23 +56,71 @@ def alignment_findings(
 ) -> list[Finding]:
     if not document.frontmatter:
         return []
-    if document.frontmatter.get("status") == "draft":
-        return []
 
     findings: list[Finding] = []
+    if document.frontmatter.get("status") != "draft":
+        findings.extend(
+            missing_source_of_truth_findings(
+                document,
+                repo_root=repo_root,
+                discovered_at=discovered_at,
+            )
+        )
+        findings.extend(
+            invalid_validation_command_findings(
+                document,
+                discovered_at=discovered_at,
+            )
+        )
     findings.extend(
-        missing_source_of_truth_findings(
+        generated_doc_findings(
             document,
             repo_root=repo_root,
             discovered_at=discovered_at,
         )
     )
-    findings.extend(
-        invalid_validation_command_findings(
-            document,
-            discovered_at=discovered_at,
+    return findings
+
+
+def generated_doc_findings(
+    document: Document,
+    *,
+    repo_root: Path,
+    discovered_at: str,
+) -> list[Finding]:
+    if document.frontmatter.get("doc_type") != "generated":
+        return []
+
+    contract = inspect_generated_doc_contract(document, repo_root=repo_root)
+    findings: list[Finding] = []
+    if contract.issues:
+        findings.append(
+            generated_doc_contract_finding(
+                document,
+                issues=contract.issues,
+                discovered_at=discovered_at,
+            )
         )
+
+    if not contract.generated_at or contract.upstream_path is None:
+        return findings
+    if not contract.upstream_path.exists() or not contract.upstream_path.is_file():
+        return findings
+
+    upstream_mtime = source_mtime_for(
+        contract.upstream_path,
+        reference=contract.generated_at,
     )
+    if upstream_mtime > contract.generated_at:
+        findings.append(
+            generated_doc_stale_finding(
+                document,
+                generated_at=contract.generated_at,
+                upstream_path=contract.upstream_path,
+                upstream_mtime=upstream_mtime,
+                discovered_at=discovered_at,
+            )
+        )
     return findings
 
 
@@ -179,6 +245,67 @@ def extract_sections(body: str) -> list[tuple[str, int, str]]:
     return sections
 
 
+def section_content_map(body: str) -> dict[str, str]:
+    return {heading: content for heading, _, content in extract_sections(body)}
+
+
+def inspect_generated_doc_contract(
+    document: Document,
+    *,
+    repo_root: Path,
+) -> GeneratedDocContract:
+    sections = section_content_map(document.body)
+    issues: list[str] = []
+
+    generation_source = extract_section_value(sections.get(GENERATED_SOURCE_HEADING, ""))
+    if generation_source is None:
+        issues.append("Generation source section must include provenance details.")
+
+    generated_timestamp_text = extract_section_value(
+        sections.get(GENERATED_TIMESTAMP_HEADING, "")
+    )
+    generated_at = None
+    if generated_timestamp_text is None:
+        issues.append("Generated timestamp section must include an ISO-8601 timestamp.")
+    else:
+        generated_at = parse_generated_timestamp(generated_timestamp_text)
+        if generated_at is None:
+            issues.append(
+                "Generated timestamp section must include a valid ISO-8601 timestamp."
+            )
+
+    upstream_reference = extract_section_value(
+        sections.get(GENERATED_UPSTREAM_HEADING, "")
+    )
+    upstream_path = None
+    if upstream_reference is None:
+        issues.append(
+            "Upstream artifact path or script section must identify the source input."
+        )
+    else:
+        upstream_path = resolve_repo_artifact(repo_root, upstream_reference)
+        if upstream_path is not None and not upstream_path.exists():
+            issues.append(
+                "Upstream artifact path or script points to a missing local file: "
+                f"{upstream_reference}"
+            )
+            upstream_path = None
+
+    regeneration_commands = extract_commands_from_text(
+        sections.get(GENERATED_COMMAND_HEADING, "")
+    )
+    if not regeneration_commands:
+        issues.append(
+            "Regeneration command section must include a runnable command snippet."
+        )
+
+    return GeneratedDocContract(
+        issues=issues,
+        generated_at=generated_at,
+        upstream_path=upstream_path,
+    )
+
+
 def extract_commands_from_text(text: str) -> list[str]:
     commands: list[str] = []
     for snippet in INLINE_CODE_RE.findall(text):
@@ -193,6 +320,45 @@ def extract_commands_from_text(text: str) -> list[str]:
                 continue
             commands.append(line)
     return commands
+
+
+def extract_section_value(text: str) -> str | None:
+    for snippet in INLINE_CODE_RE.findall(text):
+        normalized = snippet.strip()
+        if normalized:
+            return normalized
+
+    for target in MARKDOWN_LINK_RE.findall(text):
+        normalized = target.split("#", 1)[0].strip()
+        if normalized:
+            return normalized
+
+    for raw_line in text.splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+        line = re.sub(r"^[-*+]\s+", "", line)
+        if line.startswith("`") and line.endswith("`"):
+            line = line[1:-1].strip()
+        if line:
+            return line
+    return None
+
+
+def parse_generated_timestamp(value: str) -> datetime | None:
+    normalized = value.strip()
+    if normalized.endswith("Z"):
+        normalized = normalized[:-1] + "+00:00"
+    try:
+        return datetime.fromisoformat(normalized)
+    except ValueError:
+        return None
+
+
+def source_mtime_for(path: Path, *, reference: datetime) -> datetime:
+    if reference.tzinfo is None:
+        return datetime.fromtimestamp(path.stat().st_mtime)
+    return datetime.fromtimestamp(path.stat().st_mtime, tz=reference.tzinfo)
 
 
 def is_docgarden_command(command: str) -> bool:

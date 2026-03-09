@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from datetime import date
+from datetime import datetime
+from pathlib import Path
 
 from .markdown import Document
 from .models import Finding, FindingContext
@@ -220,4 +222,60 @@ def broken_link_finding(
         safe_to_autofix=False,
         cluster="routing-drift",
         suffix=f"link-{abs(hash(link))}",
+    )
+
+
+def generated_doc_contract_finding(
+    document: Document,
+    *,
+    issues: list[str],
+    discovered_at: str,
+) -> Finding:
+    context = document_context(document, discovered_at=discovered_at)
+    return Finding.open_issue(
+        context,
+        kind="generated-doc-contract",
+        severity="high",
+        summary=(
+            f"{document.rel_path} is missing required generated-doc provenance details."
+        ),
+        evidence=issues,
+        recommended_action=(
+            "Fill in the generated-doc provenance sections with a generation "
+            "source, generated timestamp, upstream artifact path or script, "
+            "and a runnable regeneration command."
+        ),
+        safe_to_autofix=False,
+        cluster="artifact-drift",
+        suffix="generated-contract",
+        details={"issues": issues},
+    )
+
+
+def generated_doc_stale_finding(
+    document: Document,
+    *,
+    generated_at: datetime,
+    upstream_path: Path,
+    upstream_mtime: datetime,
+    discovered_at: str,
+) -> Finding:
+    context = document_context(document, discovered_at=discovered_at)
+    return Finding.open_issue(
+        context,
+        kind="generated-doc-stale",
+        severity="medium",
+        summary=f"{document.rel_path} is older than its local upstream source.",
+        evidence=[
+            f"generated_timestamp={generated_at.isoformat()}",
+            f"upstream_path={upstream_path}",
+            f"upstream_mtime={upstream_mtime.isoformat()}",
+        ],
+        recommended_action=(
+            "Regenerate the doc from the referenced local artifact or script, "
+            "or update the provenance metadata if the source changed."
+        ),
+        safe_to_autofix=False,
+        cluster="stale-docs",
+        suffix="generated-stale",
     )
