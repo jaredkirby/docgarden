@@ -18,7 +18,10 @@ from docgarden.models import (
 from docgarden.quality import build_scorecard, write_quality_score
 from docgarden.scan_alignment import (
     extract_validation_commands,
+    infer_promotion_destination_docs,
     is_supported_docgarden_command,
+    normalize_promotion_rule,
+    is_promotion_rule_candidate,
     resolve_repo_artifact,
     stable_suffix,
 )
@@ -182,6 +185,32 @@ uv run docgarden quality write
     assert stable_suffix("source", "scripts/missing.py") == (
         "source-scripts-missing-py-0ea0f4190a"
     )
+
+
+def test_promotion_helpers_filter_generic_text_and_infer_destinations(tmp_path) -> None:
+    repo = tmp_path
+    write(repo / "README.md", "# README\n")
+    write(repo / "docs" / "index.md", "# Docs Index\n")
+    write(repo / "docs" / "PLANS.md", "# Plans\n")
+
+    generic_statement = "Keep this updated for future work."
+    durable_statement = (
+        "Full scans should remain the source of truth for findings.jsonl and score.json."
+    )
+
+    assert is_promotion_rule_candidate(generic_statement) is False
+    assert is_promotion_rule_candidate(durable_statement) is True
+    assert normalize_promotion_rule(durable_statement) == (
+        "full scans should remain the source of truth for findings.jsonl and score.json."
+    )
+    assert infer_promotion_destination_docs(
+        normalize_promotion_rule(durable_statement),
+        source_files=[
+            "docs/exec-plans/active/plan-a.md",
+            "docs/exec-plans/active/plan-b.md",
+        ],
+        repo_root=repo,
+    ) == ["docs/PLANS.md", "docs/index.md", "README.md"]
 
 
 def test_active_findings_from_latest_events_supports_legacy_history_payloads() -> None:

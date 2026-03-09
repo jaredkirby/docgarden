@@ -62,6 +62,17 @@ review_cycle_days: 30
 ---
 """
 
+EXEC_PLAN_FRONTMATTER = """---
+doc_id: exec-plan-doc
+doc_type: exec-plan
+domain: exec-plans
+owner: kirby
+status: draft
+last_reviewed: 2026-03-08
+review_cycle_days: 14
+---
+"""
+
 
 def write(path: Path, content: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -95,6 +106,52 @@ Text.
 
 ## Related docs
 {extra_body}
+""",
+    )
+
+
+def write_exec_plan(
+    repo: Path,
+    rel_path: str,
+    *,
+    doc_id: str,
+    title: str,
+    assumptions: str = "Text.",
+    discoveries: str = "Text.",
+    decision_log: str = "Text.",
+) -> None:
+    write(
+        repo / rel_path,
+        EXEC_PLAN_FRONTMATTER.replace("doc_id: exec-plan-doc", f"doc_id: {doc_id}")
+        + f"""
+# {title}
+
+## Purpose
+Text.
+
+## Context
+Text.
+
+## Assumptions
+{assumptions}
+
+## Steps / Milestones
+1. Text.
+
+## Validation
+- `uv run pytest`
+
+## Progress
+- 2026-03-08: Started work.
+
+## Discoveries
+{discoveries}
+
+## Decision Log
+{decision_log}
+
+## Outcomes / Retrospective
+Text.
 """,
     )
 
@@ -954,6 +1011,96 @@ Text.
         findings, _, _ = scan_repo(repo)
 
         self.assertEqual(findings, [])
+
+    def test_scan_flags_repeated_transient_rule_for_promotion(self) -> None:
+        repo = self.make_repo()
+        write_docs_index(repo)
+        write(repo / "README.md", "# README\n")
+        write(repo / "docs" / "PLANS.md", "# Plans\n")
+        repeated_rule = (
+            "- Full scans should remain the source of truth for "
+            "`findings.jsonl` and `score.json`.\n"
+        )
+        write_exec_plan(
+            repo,
+            "docs/exec-plans/active/plan-a.md",
+            doc_id="plan-a",
+            title="Plan A",
+            discoveries=repeated_rule,
+        )
+        write_exec_plan(
+            repo,
+            "docs/exec-plans/active/plan-b.md",
+            doc_id="plan-b",
+            title="Plan B",
+            decision_log=repeated_rule,
+        )
+
+        findings, _, _ = scan_repo(repo)
+
+        promotion = next(item for item in findings if item.kind == "promotion-suggestion")
+        self.assertEqual(
+            promotion.files,
+            [
+                "docs/exec-plans/active/plan-a.md",
+                "docs/exec-plans/active/plan-b.md",
+            ],
+        )
+        self.assertEqual(
+            promotion.details["candidate_destinations"],
+            ["docs/PLANS.md", "docs/index.md", "README.md"],
+        )
+        self.assertEqual(
+            promotion.details["source_occurrences"],
+            [
+                {
+                    "file": "docs/exec-plans/active/plan-a.md",
+                    "section": "discoveries",
+                    "statement": (
+                        "Full scans should remain the source of truth for "
+                        "`findings.jsonl` and `score.json`."
+                    ),
+                },
+                {
+                    "file": "docs/exec-plans/active/plan-b.md",
+                    "section": "decision log",
+                    "statement": (
+                        "Full scans should remain the source of truth for "
+                        "`findings.jsonl` and `score.json`."
+                    ),
+                },
+            ],
+        )
+        self.assertIn(
+            "Candidate destination docs: docs/PLANS.md, docs/index.md, README.md",
+            promotion.evidence,
+        )
+
+    def test_scan_ignores_generic_repeated_exec_plan_wording(self) -> None:
+        repo = self.make_repo()
+        write_docs_index(repo)
+        generic_rule = "- Keep this updated for future work.\n"
+        write_exec_plan(
+            repo,
+            "docs/exec-plans/active/plan-a.md",
+            doc_id="plan-a",
+            title="Plan A",
+            discoveries=generic_rule,
+        )
+        write_exec_plan(
+            repo,
+            "docs/exec-plans/active/plan-b.md",
+            doc_id="plan-b",
+            title="Plan B",
+            decision_log=generic_rule,
+        )
+
+        findings, _, _ = scan_repo(repo)
+
+        self.assertEqual(
+            [item.kind for item in findings if item.kind == "promotion-suggestion"],
+            [],
+        )
 
     def test_scan_flags_generated_doc_contract_issues(self) -> None:
         repo = self.make_repo()

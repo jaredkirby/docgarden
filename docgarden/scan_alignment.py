@@ -63,6 +63,123 @@ HIDDEN_NON_REPO_WORKFLOW_ROOTS = {
     "__pycache__",
 }
 WORKFLOW_PLACEHOLDER_MARKERS = ("...", "<", ">", "{", "}", "$(", "${", "*")
+TRANSIENT_DOC_PATH_KEYWORDS = {
+    "handoff",
+    "note",
+    "notes",
+    "scratch",
+    "summary",
+    "summaries",
+    "temp",
+    "temporary",
+    "workaround",
+    "workarounds",
+}
+PROMOTION_EXCLUDED_SECTION_HEADINGS = {
+    normalize_heading("Progress"),
+    normalize_heading("Outcomes / Retrospective"),
+}
+PROMOTION_RULE_SIGNAL_RE = re.compile(
+    r"\b("
+    r"must|should|needs?\s+to|do\s+not|don't|never|always|prefer|"
+    r"keep|treat|require|requires|limit|belongs\s+in|live[s]?\s+in|"
+    r"source\s+of\s+truth"
+    r")\b"
+)
+PROMOTION_ANCHOR_KEYWORDS = (
+    "agents.md",
+    "canonical",
+    "docgarden",
+    "docs/",
+    ".docgarden",
+    "exec plan",
+    "exec plans",
+    "findings.jsonl",
+    "plan.json",
+    "quality score",
+    "review packet",
+    "score.json",
+    "safe autofix",
+    "source of truth",
+)
+PROMOTION_STOPWORDS = {
+    "a",
+    "an",
+    "and",
+    "are",
+    "as",
+    "at",
+    "be",
+    "because",
+    "by",
+    "for",
+    "from",
+    "if",
+    "in",
+    "into",
+    "is",
+    "it",
+    "its",
+    "of",
+    "on",
+    "or",
+    "that",
+    "the",
+    "their",
+    "them",
+    "then",
+    "this",
+    "to",
+    "use",
+    "with",
+}
+PROMOTION_DESTINATION_HINTS = (
+    (
+        "docs/PLANS.md",
+        (
+            "exec plan",
+            "exec plans",
+            "exec-plans",
+            "progress",
+            "decision log",
+            "discoveries",
+            "active plans",
+        ),
+    ),
+    (
+        "docs/index.md",
+        (
+            "agents.md",
+            "canonical",
+            "docs/",
+            "source of truth",
+            "system of record",
+        ),
+    ),
+    (
+        "README.md",
+        (
+            "docgarden",
+            ".docgarden",
+            "findings.jsonl",
+            "plan.json",
+            "quality score",
+            "review packet",
+            "safe autofix",
+            "score.json",
+        ),
+    ),
+    (
+        "docs/design-docs/docgarden-spec.md",
+        (
+            "promotion suggestion",
+            "review packet",
+            "safe autofix",
+            "source of truth",
+            "strict score",
+        ),
+    ),
+)
 
 
 @dataclass(slots=True)
@@ -70,6 +187,14 @@ class GeneratedDocContract:
     issues: list[str]
     generated_at: datetime | None
     upstream_path: Path | None
+
+
+@dataclass(frozen=True, slots=True)
+class PromotionOccurrence:
+    rel_path: str
+    section: str
+    statement: str
+    normalized_rule: str
 
 
 def stable_suffix(prefix: str, value: str) -> str:
@@ -114,6 +239,102 @@ def alignment_findings(
             discovered_at=discovered_at,
         )
     )
+    return findings
+
+
+def promotion_suggestion_findings(
+    documents: list[Document],
+    *,
+    repo_root: Path,
+    discovered_at: str,
+) -> list[Finding]:
+    occurrences_by_rule: dict[str, list[PromotionOccurrence]] = {}
+    for document in documents:
+        if not is_transient_knowledge_doc(document):
+            continue
+        for occurrence in extract_promotion_rule_occurrences(document):
+            occurrences_by_rule.setdefault(occurrence.normalized_rule, []).append(
+                occurrence
+            )
+
+    findings: list[Finding] = []
+    for normalized_rule, occurrences in sorted(occurrences_by_rule.items()):
+        unique_by_file: dict[str, PromotionOccurrence] = {}
+        for occurrence in occurrences:
+            unique_by_file.setdefault(occurrence.rel_path, occurrence)
+        if len(unique_by_file) < 2:
+            continue
+
+        ordered_occurrences = [
+            unique_by_file[rel_path] for rel_path in sorted(unique_by_file)
+        ]
+        source_files = [item.rel_path for item in ordered_occurrences]
+        candidate_destinations = infer_promotion_destination_docs(
+            normalized_rule,
+            source_files=source_files,
+            repo_root=repo_root,
+        )
+        summary_statement = ordered_occurrences[0].statement
+        evidence = [
+            (
+                f"Repeated transient rule across {len(source_files)} docs: "
+                f"{summary_statement}"
+            )
+        ]
+        evidence.extend(
+            f"Source: {item.rel_path} [{item.section}]"
+            for item in ordered_occurrences[:3]
+        )
+        if candidate_destinations:
+            evidence.append(
+                "Candidate destination docs: " + ", ".join(candidate_destinations)
+            )
+
+        recommended_action = (
+            "Promote the repeated rule into a durable doc and replace the "
+            "transient copies with links or shorter reminders."
+        )
+        if candidate_destinations:
+            recommended_action = (
+                "Promote the repeated rule into "
+                + ", ".join(candidate_destinations)
+                + ", then replace the transient copies with links or shorter reminders."
+            )
+
+        context = FindingContext(
+            rel_path=source_files[0],
+            domain="docs",
+            discovered_at=discovered_at,
+            files=source_files,
+        )
+        findings.append(
+            Finding.open_issue(
+                context,
+                kind="promotion-suggestion",
+                severity="low",
+                summary=(
+                    "Repeated transient rule should move into a durable doc: "
+                    f"{summary_statement}"
+                ),
+                evidence=evidence,
+                recommended_action=recommended_action,
+                safe_to_autofix=False,
+                cluster="promotion-opportunities",
+                suffix=stable_suffix("promotion", normalized_rule),
+                details={
+                    "candidate_destinations": candidate_destinations,
+                    "normalized_rule": normalized_rule,
+                    "source_occurrences": [
+                        {
+                            "file": item.rel_path,
+                            "section": item.section,
+                            "statement": item.statement,
+                        }
+                        for item in ordered_occurrences
+                    ],
+                },
+            )
+        )
     return findings
 
 
@@ -683,3 +904,125 @@ def should_ignore_workflow_asset(path: Path, *, repo_root: Path) -> bool:
         rel_path = path
     root_name = rel_path.parts[0] if rel_path.parts else rel_path.name
     return root_name in HIDDEN_NON_REPO_WORKFLOW_ROOTS
+
+
+def is_transient_knowledge_doc(document: Document) -> bool:
+    if document.path.name == "AGENTS.md":
+        return False
+    if document.frontmatter.get("doc_type") == "exec-plan":
+        return True
+    if document.frontmatter.get("doc_type") in {"archive", "generated", "canonical"}:
+        return False
+    if document.frontmatter.get("status") == "verified":
+        return False
+    path_tokens = {
+        token
+        for part in Path(document.rel_path).with_suffix("").parts
+        for token in re.split(r"[^a-z0-9]+", part.lower())
+        if token
+    }
+    return bool(path_tokens & TRANSIENT_DOC_PATH_KEYWORDS)
+
+
+def extract_promotion_rule_occurrences(document: Document) -> list[PromotionOccurrence]:
+    seen_rules: set[str] = set()
+    occurrences: list[PromotionOccurrence] = []
+    for heading, depth, content in extract_sections(document.body):
+        if depth < 2:
+            continue
+        if heading in PROMOTION_EXCLUDED_SECTION_HEADINGS:
+            continue
+        for block in promotion_candidate_blocks(content):
+            statement = clean_promotion_statement(block)
+            if not statement or not is_promotion_rule_candidate(statement):
+                continue
+            normalized_rule = normalize_promotion_rule(statement)
+            if normalized_rule in seen_rules:
+                continue
+            seen_rules.add(normalized_rule)
+            occurrences.append(
+                PromotionOccurrence(
+                    rel_path=document.rel_path,
+                    section=heading,
+                    statement=statement,
+                    normalized_rule=normalized_rule,
+                )
+            )
+    return occurrences
+
+
+def promotion_candidate_blocks(text: str) -> list[str]:
+    blocks: list[str] = []
+    current: list[str] = []
+    for raw_line in text.splitlines():
+        stripped = raw_line.strip()
+        if not stripped:
+            if current:
+                blocks.append(" ".join(current))
+                current = []
+            continue
+        if re.match(r"^[-*+]\s+", stripped) or re.match(r"^\d+\.\s+", stripped):
+            if current:
+                blocks.append(" ".join(current))
+            current = [stripped]
+            continue
+        current.append(stripped)
+    if current:
+        blocks.append(" ".join(current))
+    return blocks
+
+
+def clean_promotion_statement(block: str) -> str:
+    cleaned = re.sub(r"^[-*+]\s+", "", block.strip())
+    cleaned = re.sub(r"^\d+\.\s+", "", cleaned)
+    cleaned = re.sub(r"^\d{4}-\d{2}-\d{2}:\s*", "", cleaned)
+    cleaned = re.sub(r"\s+", " ", cleaned)
+    return cleaned.strip()
+
+
+def is_promotion_rule_candidate(statement: str) -> bool:
+    normalized = statement.strip()
+    if not normalized:
+        return False
+    words = re.findall(r"[a-z0-9./-]+", normalized.lower())
+    if len(words) < 7 or len(words) > 45:
+        return False
+    if not PROMOTION_RULE_SIGNAL_RE.search(normalized.lower()):
+        return False
+    if not any(anchor in normalized.lower() for anchor in PROMOTION_ANCHOR_KEYWORDS):
+        return False
+    content_words = {
+        word
+        for word in words
+        if len(word) >= 4 and word not in PROMOTION_STOPWORDS
+    }
+    return len(content_words) >= 3
+
+
+def normalize_promotion_rule(statement: str) -> str:
+    normalized = statement.lower().replace("`", "")
+    normalized = re.sub(r"\[[^\]]+\]\(([^)]+)\)", r"\1", normalized)
+    normalized = re.sub(r"[^a-z0-9./]+", " ", normalized)
+    normalized = re.sub(r"\s+", " ", normalized)
+    return normalized.strip()
+
+
+def infer_promotion_destination_docs(
+    normalized_rule: str,
+    *,
+    source_files: list[str],
+    repo_root: Path,
+) -> list[str]:
+    candidates: list[str] = []
+    lower_source_paths = " ".join(source_files).lower()
+    for doc_path, hints in PROMOTION_DESTINATION_HINTS:
+        if not (repo_root / doc_path).exists():
+            continue
+        if any(hint in normalized_rule or hint in lower_source_paths for hint in hints):
+            candidates.append(doc_path)
+    if not candidates:
+        for fallback in ("docs/PLANS.md", "docs/index.md", "README.md"):
+            if (repo_root / fallback).exists():
+                candidates.append(fallback)
+                break
+    return candidates[:3]

@@ -356,6 +356,8 @@ The repo currently includes:
 - unsupported `docgarden` validation command checks on non-draft docs
 - workflow drift checks for missing repo-owned local assets in workflow-style
   sections
+- promotion suggestions when the same repo-specific rule repeats across exec
+  plans or other transient note-style docs
 - quality scoring and score publication
 - persisted score trend points, configurable domain-weighted rollups, and
   critical-domain regression summaries
@@ -378,4 +380,4 @@ The repo currently includes:
 - a Codex worker/reviewer loop that can continue until a slice is accepted or
   blocked
 
-Next planned slice: Promotion suggestions from transient docs.
+The current published slice backlog is fully implemented through S14.

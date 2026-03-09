@@ -78,7 +78,7 @@ criteria rather than re-explaining the whole product vision.
 | S11 | completed | Safe autofix expansion | S07, S08 |
 | S12 | completed | CI enforcement and scheduled automation | S03, S09, S11 |
 | S13 | completed | Draft PR / issue automation | S12 |
-| S14 | queued | Promotion suggestions from transient docs | S10 |
+| S14 | completed | Promotion suggestions from transient docs | S10 |
 
 ## Current baseline
 
@@ -436,7 +436,7 @@ Acceptance:
 
 ### S14: Promotion suggestions from transient docs
 
-Status: `queued`
+Status: `completed`
 
 Goal:
 - Surface when repeated rules should move from exec plans or notes into

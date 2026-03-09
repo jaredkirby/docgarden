@@ -105,6 +105,9 @@ spec sections to PR-sized implementation units.
 - 2026-03-09: Kept S13 fail-closed by requiring explicit `.docgarden/config.yaml` repo support plus a configured token env var before any GitHub draft PR or issue publish path will run.
 - 2026-03-09: Tightened S13 after review so PR publish mode now refuses zero-finding drafts, and added direct coverage plus README guidance for the `--unsafe-as-issue --publish` path creating a normal GitHub issue.
 - 2026-03-09: Tightened S13 again so `docgarden pr draft` now summarizes only actionable queue findings, leaving `accepted_debt`, `fixed`, and `false_positive` items out of both local draft text and remote publish scope.
+- 2026-03-09: Implemented S14 promotion suggestions so repo-wide scans now detect repeated rule-like statements across exec plans and other transient note-style docs.
+- 2026-03-09: Kept S14 explainable by storing source file, section, normalized rule text, and candidate destination docs on each `promotion-suggestion` finding instead of emitting an opaque repetition score.
+- 2026-03-09: Added regression coverage for a positive repeated-rule case plus the generic-wording boundary so transient repetition has to look both directive and repo-specific before it reaches the queue.
 
 ## Discoveries
 
@@ -223,6 +226,13 @@ spec sections to PR-sized implementation units.
 - Draft automation should follow the operator queue, not the score-tracking
   set; including `accepted_debt` in PR or issue scope makes the summary drift
   away from the work a human has actually left open.
+- Exact-duplicate matching is a good first boundary for promotion suggestions:
+  it catches clearly repeated durable rules without over-claiming that loose
+  paraphrases are the same instruction.
+- Repetition alone is too noisy on generic project prose, so the detector needs
+  both a directive signal (`should`, `must`, `keep`, `treat`, etc.) and a
+  repo-specific anchor such as `docgarden`, `docs/`, `AGENTS.md`, or durable
+  state-file names before it suggests promotion.
 
 ## Decision Log
 
@@ -303,7 +313,10 @@ spec sections to PR-sized implementation units.
 - 2026-03-09: Keep nightly automation auditable by uploading the generated
   score artifacts and any safe-autofix patch, but stop short of auto-committing
   or opening PRs until the later draft-PR slice lands.
+- 2026-03-09: Model S14 as a repo-wide detector over transient docs only, and
+  keep changed-scope scans read-only by explicitly skipping promotion checks in
+  partial mode instead of inferring repetition from incomplete context.
 
 ## Outcomes / Retrospective
 
-S12 is now implemented and verified with repo tests plus `docgarden scan`.
+S14 is now implemented and verified with repo tests plus `docgarden scan`.

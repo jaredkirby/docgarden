@@ -25,6 +25,7 @@ from .scan_document_rules import (
 )
 from .scan_alignment import alignment_findings
 from .scan_alignment import deterministic_internal_reference_replacement
+from .scan_alignment import promotion_suggestion_findings
 from .scan_linkage import (
     append_inbound_link,
     broken_route_findings,
@@ -44,6 +45,7 @@ CHANGED_SCOPE_SKIPPED_VIEWS = [
     "repo-wide duplicate doc_id checks",
     "repo-wide broken-route checks",
     "repo-wide stale-route quality checks",
+    "repo-wide transient-rule promotion checks",
     "repo-wide orphan-doc checks",
     "durable .docgarden findings, plan, and score updates",
 ]
@@ -576,6 +578,13 @@ def scan_repo(repo_root: Path) -> tuple[list[Finding], dict[str, int], list[Docu
         route_quality_findings(
             repo_root,
             documents,
+            discovered_at=discovered_at,
+        )
+    )
+    findings.extend(
+        promotion_suggestion_findings(
+            documents,
+            repo_root=repo_root,
             discovered_at=discovered_at,
         )
     )
