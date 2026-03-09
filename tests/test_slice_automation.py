@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import subprocess
 from pathlib import Path
+import time
 
 from docgarden.cli import main
 from docgarden.slice_automation import build_slice_paths, load_slice_catalog
@@ -14,6 +15,8 @@ def write(path: Path, content: str) -> None:
 
 
 class FakePopen:
+    _next_pid = 1000
+
     def __init__(
         self,
         cmd,
@@ -24,6 +27,8 @@ class FakePopen:
         timeout_log,
     ) -> None:
         self.cmd = cmd
+        self.pid = FakePopen._next_pid
+        FakePopen._next_pid += 1
         self.returncode: int | None = None
         self._stdout_file = stdout_file
         self._stderr_file = stderr_file
@@ -36,6 +41,9 @@ class FakePopen:
         self._timeout_log.append(timeout)
         if input is not None:
             assert isinstance(input, str)
+        sleep_seconds = float(self._response.get("sleep_seconds", 0.0))
+        if sleep_seconds > 0:
+            time.sleep(sleep_seconds)
         if not self._emitted_output:
             stdout_text = self._response.get("stdout", "")
             stderr_text = self._response.get("stderr", "")
@@ -60,6 +68,9 @@ class FakePopen:
 
     def kill(self) -> None:
         self.returncode = int(self._response.get("killed_returncode", -9))
+
+    def poll(self) -> int | None:
+        return self.returncode
 
 
 def make_slice_repo(tmp_path: Path) -> Path:
@@ -445,6 +456,10 @@ def test_cli_slices_run_revises_then_advances_to_next_slice(
     assert status["status"] == "ready_for_next_slice"
     assert status["worker_timeout_seconds"] == 900
     assert status["reviewer_timeout_seconds"] == 300
+    assert status["phase_started_at"]
+    assert status["last_heartbeat_at"]
+    assert status["elapsed_seconds"] >= 0
+    assert status["agent_pid"] >= 1000
 
 
 def test_cli_slices_run_times_out_and_persists_partial_logs(
@@ -500,6 +515,9 @@ def test_cli_slices_run_times_out_and_persists_partial_logs(
     assert status["current_phase"] == "worker"
     assert status["current_prefix"] == "worker-round-1"
     assert "timed out for worker-round-1 after 12 seconds" in status["error"]
+    assert status["phase_started_at"]
+    assert status["last_heartbeat_at"]
+    assert status["elapsed_seconds"] >= 0
     assert (repo / "docs" / "progress.md").exists()
 
 
@@ -546,6 +564,9 @@ def test_cli_slices_run_nonzero_exit_persists_logs(tmp_path, monkeypatch, capsys
     status = json.loads((run_dir / "run-status.json").read_text(encoding="utf-8"))
     assert status["status"] == "failed"
     assert status["worker_timeout_seconds"] == 900
+    assert status["phase_started_at"]
+    assert status["last_heartbeat_at"]
+    assert status["elapsed_seconds"] >= 0
 
 
 def test_cli_slices_run_supports_role_specific_timeouts(
@@ -608,6 +629,58 @@ def test_cli_slices_run_supports_role_specific_timeouts(
     )
     _ = capsys.readouterr()
     assert timeouts == [15, 4]
+
+
+def test_cli_slices_run_updates_run_status_heartbeat_during_long_worker(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    repo = make_slice_repo(tmp_path)
+    monkeypatch.chdir(repo)
+    monkeypatch.setattr("docgarden.slices.runner.RUN_STATUS_HEARTBEAT_SECONDS", 0.01)
+    timeouts: list[int | None] = []
+    responses = iter(
+        [
+            {
+                "status": "blocked",
+                "summary": "Need product clarification.",
+                "files_touched": ["docgarden/scan_alignment.py"],
+                "tests_run": ["uv run pytest"],
+                "docs_updated": [],
+                "notes_for_reviewer": [],
+                "open_questions": ["Clarify product behavior."],
+            },
+        ]
+    )
+
+    def fake_popen(cmd, cwd, stdin, stdout, stderr, text, env):
+        payload = next(responses)
+
+        def write_output(command) -> None:
+            output_path = Path(command[command.index("--output-last-message") + 1])
+            output_path.write_text(json.dumps(payload), encoding="utf-8")
+
+        sleep_seconds = 0.12
+        return FakePopen(
+            cmd,
+            stdout_file=stdout,
+            stderr_file=stderr,
+            response={
+                "write_output": write_output,
+                "sleep_seconds": sleep_seconds,
+            },
+            timeout_log=timeouts,
+        )
+
+    monkeypatch.setattr("docgarden.slices.runner.subprocess.Popen", fake_popen)
+
+    assert main(["slices", "run", "--max-slices", "1"]) == 1
+    _ = capsys.readouterr()
+    run_dirs = sorted((repo / ".docgarden" / "slice-loops").iterdir())
+    assert len(run_dirs) == 1
+    status = json.loads((run_dirs[0] / "run-status.json").read_text(encoding="utf-8"))
+    assert status["status"] == "blocked_pending_product_clarification"
+    assert status["elapsed_seconds"] > 0
+    assert status["last_heartbeat_at"] >= status["phase_started_at"]
 
 
 def test_cli_slices_run_rejects_mixed_timeout_flags(

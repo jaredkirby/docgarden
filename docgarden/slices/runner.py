@@ -7,7 +7,9 @@ import os
 import subprocess
 from pathlib import Path
 import sys
-from typing import Any
+import threading
+import time
+from typing import Any, Callable
 
 from ..errors import DocgardenError
 from ..files import atomic_write_text
@@ -40,6 +42,7 @@ DEFAULT_CODEX_EXEC_ARGS = (
 
 DEFAULT_WORKER_TIMEOUT_SECONDS = 900
 DEFAULT_REVIEWER_TIMEOUT_SECONDS = 300
+RUN_STATUS_HEARTBEAT_SECONDS = 5.0
 
 
 @dataclass(slots=True)
@@ -180,12 +183,16 @@ def _run_single_slice(
             previous_worker_output_path=previous_worker_output_path,
         )
         worker_prefix = f"worker-round-{round_number}"
+        worker_status = {
+            "current_phase": "worker",
+            "current_round": round_number,
+            "current_prefix": worker_prefix,
+        }
         _write_run_status(
             run_dir,
             **status_payload,
-            current_phase="worker",
-            current_round=round_number,
-            current_prefix=worker_prefix,
+            status="running",
+            **worker_status,
         )
         try:
             worker_run = _run_codex_agent(
@@ -198,15 +205,18 @@ def _run_single_slice(
                 schema=WORKER_OUTPUT_SCHEMA,
                 prefix=worker_prefix,
                 timeout_seconds=worker_timeout_seconds,
+                status_callback=_make_status_callback(
+                    run_dir,
+                    status_payload,
+                    worker_status,
+                ),
             )
         except DocgardenError as exc:
             _write_run_status(
                 run_dir,
                 **status_payload,
+                **worker_status,
                 status="failed",
-                current_phase="worker",
-                current_round=round_number,
-                current_prefix=worker_prefix,
                 error=str(exc),
             )
             raise
@@ -242,12 +252,16 @@ def _run_single_slice(
             prior_review_path=prior_review_path,
         )
         review_prefix = f"review-round-{round_number}"
+        review_status = {
+            "current_phase": "review",
+            "current_round": round_number,
+            "current_prefix": review_prefix,
+        }
         _write_run_status(
             run_dir,
             **status_payload,
-            current_phase="review",
-            current_round=round_number,
-            current_prefix=review_prefix,
+            status="running",
+            **review_status,
             last_worker_output=str(worker_run.output_path),
         )
         try:
@@ -261,15 +275,19 @@ def _run_single_slice(
                 schema=REVIEW_OUTPUT_SCHEMA,
                 prefix=review_prefix,
                 timeout_seconds=reviewer_timeout_seconds,
+                status_callback=_make_status_callback(
+                    run_dir,
+                    status_payload,
+                    review_status,
+                    last_worker_output=str(worker_run.output_path),
+                ),
             )
         except DocgardenError as exc:
             _write_run_status(
                 run_dir,
                 **status_payload,
+                **review_status,
                 status="failed",
-                current_phase="review",
-                current_round=round_number,
-                current_prefix=review_prefix,
                 last_worker_output=str(worker_run.output_path),
                 error=str(exc),
             )
@@ -327,6 +345,7 @@ def _run_codex_agent(
     schema: dict[str, Any],
     prefix: str,
     timeout_seconds: int | None,
+    status_callback: Callable[..., None] | None = None,
 ) -> AgentRunArtifact:
     prompt_path = run_dir / f"{prefix}.prompt.txt"
     schema_path = run_dir / f"{prefix}.schema.json"
@@ -370,9 +389,40 @@ def _run_codex_agent(
                 text=True,
                 env=_build_codex_subprocess_env(),
             )
+            started_at = _iso_now()
+            started_monotonic = time.monotonic()
+            if status_callback is not None:
+                status_callback(
+                    agent_pid=process.pid,
+                    phase_started_at=started_at,
+                    last_heartbeat_at=started_at,
+                    elapsed_seconds=0.0,
+                )
+            stop_event = threading.Event()
+            heartbeat_thread: threading.Thread | None = None
+            if status_callback is not None:
+                heartbeat_thread = threading.Thread(
+                    target=_heartbeat_run_status,
+                    args=(process, stop_event, status_callback, started_monotonic),
+                    daemon=True,
+                )
+                heartbeat_thread.start()
             try:
                 process.communicate(input=prompt, timeout=timeout_seconds)
+                if status_callback is not None:
+                    status_callback(
+                        agent_pid=process.pid,
+                        last_heartbeat_at=_iso_now(),
+                        elapsed_seconds=_elapsed_seconds(started_monotonic),
+                    )
             except subprocess.TimeoutExpired as exc:
+                if status_callback is not None:
+                    status_callback(
+                        agent_pid=process.pid,
+                        last_heartbeat_at=_iso_now(),
+                        elapsed_seconds=_elapsed_seconds(started_monotonic),
+                    )
+                stop_event.set()
                 process.kill()
                 process.communicate()
                 timeout_display = "the configured timeout"
@@ -382,6 +432,10 @@ def _run_codex_agent(
                     f"Codex agent run timed out for {prefix} after {timeout_display}. "
                     f"Partial logs were written to {stdout_path} and {stderr_path}."
                 ) from exc
+            finally:
+                stop_event.set()
+                if heartbeat_thread is not None:
+                    heartbeat_thread.join(timeout=1)
     except FileNotFoundError as exc:
         raise DocgardenError(f"Could not find Codex CLI binary: {codex_bin}.") from exc
 
@@ -417,12 +471,63 @@ def _run_codex_agent(
     )
 
 
+def _make_status_callback(
+    run_dir: Path,
+    base_payload: dict[str, Any],
+    phase_payload: dict[str, Any],
+    **extra_payload: Any,
+) -> Callable[..., None]:
+    def emit(**heartbeat_payload: Any) -> None:
+        _write_run_status(
+            run_dir,
+            **base_payload,
+            **phase_payload,
+            **extra_payload,
+            **heartbeat_payload,
+        )
+
+    return emit
+
+
+def _heartbeat_run_status(
+    process: subprocess.Popen[str],
+    stop_event: threading.Event,
+    status_callback: Callable[..., None],
+    started_monotonic: float,
+) -> None:
+    while not stop_event.wait(RUN_STATUS_HEARTBEAT_SECONDS):
+        if process.poll() is not None:
+            return
+        status_callback(
+            agent_pid=process.pid,
+            last_heartbeat_at=_iso_now(),
+            elapsed_seconds=_elapsed_seconds(started_monotonic),
+        )
+
+
 def _write_run_status(run_dir: Path, **payload: Any) -> None:
-    enriched = {"updated_at": datetime.now().isoformat(), **payload}
+    existing: dict[str, Any] = {}
+    status_path = run_dir / "run-status.json"
+    if status_path.exists():
+        try:
+            loaded = json.loads(status_path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            loaded = {}
+        if isinstance(loaded, dict):
+            existing = loaded
+    enriched = {**existing, **payload, "updated_at": _iso_now()}
     atomic_write_text(
-        run_dir / "run-status.json",
+        status_path,
         json.dumps(enriched, indent=2, sort_keys=True) + "\n",
     )
+
+
+def _iso_now() -> str:
+    return datetime.now().isoformat()
+
+
+def _elapsed_seconds(started_monotonic: float) -> float:
+    return round(time.monotonic() - started_monotonic, 1)
 
 
 def _build_codex_subprocess_env() -> dict[str, str]:

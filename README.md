@@ -141,6 +141,16 @@ printed run directory, inspect `run-status.json`, run `git status`, and then
 verify any partial work with `uv run pytest` and `uv run docgarden scan` before
 you decide whether to retry or recover manually.
 
+`run-status.json` now updates during long worker/reviewer runs. The most useful
+live fields are:
+
+- `current_phase`: whether the loop is in the worker or reviewer pass
+- `current_round`: which revision round is active
+- `phase_started_at`: when that worker/reviewer phase began
+- `last_heartbeat_at`: the most recent liveness update written by the runner
+- `elapsed_seconds`: how long the current phase has been running
+- `agent_pid`: the local `codex exec` process id backing the current phase
+
 For other repos, the `slices` CLI also accepts path overrides such as
 `--catalog-path`, `--spec-path`, `--plan-path`, `--artifacts-dir`,
 `--worker-timeout-seconds`, and `--reviewer-timeout-seconds`.
@@ -148,6 +158,50 @@ For other repos, the `slices` CLI also accepts path overrides such as
 There is also a repo-owned operator skill at
 `.agents/skills/docgarden-slice-orchestrator/SKILL.md` for agents that need to
 run the loop the way a human user would.
+
+## Score rollups
+
+`docgarden` now records more than just overall and strict scores. Full scans
+also persist:
+
+- weighted domain rollups
+- raw domain averages
+- critical-domain regressions
+- trend points across scans
+
+Operators configure those rollups in `.docgarden/config.yaml`. Example:
+
+```yaml
+critical_domains:
+  - docs
+  - exec-plans
+domain_weights:
+  docs: 4
+  exec-plans: 3
+  design-docs: 2
+```
+
+How the knobs work:
+
+- `domain_weights` changes the weighted rollup only; it does not hide the raw
+  per-domain scores
+- omitted domains default to weight `1`
+- `critical_domains` marks domains that should be called out separately when
+  their score regresses, even if the overall score still looks healthy
+
+Where to inspect the outputs:
+
+- `.docgarden/score.json`
+  Key fields: `rollup.weighted_score`, `rollup.raw_average_score`,
+  `rollup.weights`, `rollup.critical_regressions`, `trend.points`,
+  `trend.summary`
+- `docs/QUALITY_SCORE.md`
+  Human-readable summary of weighted rollup, raw average, trend, and critical
+  regressions
+- `docgarden scan`
+  Refreshes the persisted score state
+- `docgarden quality write`
+  Regenerates `docs/QUALITY_SCORE.md` from the latest score state
 
 ## Current implementation status
 

@@ -58,7 +58,8 @@ docgarden slices run --catalog-path <slice-backlog.md> --spec-path <spec.md> --p
    Read:
    - worker output JSON
    - review output JSON
-   - `run-status.json` for the current phase, timeout settings, and latest error
+   - `run-status.json` for the current phase, timeout settings, latest error,
+     heartbeat, and elapsed time
    - stdout/stderr logs if something failed
    The CLI now prints the artifact directory to stderr as soon as each slice
    starts, so you can inspect the live run before the final JSON summary lands.
@@ -148,6 +149,9 @@ uv run docgarden scan
 When `docgarden slices run` times out:
 
 1. Read the printed artifact directory path and inspect `run-status.json`.
+   Focus on `current_phase`, `phase_started_at`, `last_heartbeat_at`, and
+   `elapsed_seconds` before deciding whether the run is merely busy or truly
+   wedged.
 2. Check whether the worker wrote partial progress to the repo with `git status`.
 3. Read `.stdout.txt` / `.stderr.txt` to distinguish a slow implementation from
    an actual launch failure.
