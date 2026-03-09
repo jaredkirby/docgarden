@@ -68,6 +68,7 @@ spec sections to PR-sized implementation units.
 - 2026-03-09: Implemented S04 queue operations with explicit `plan focus`, `plan resolve`, and `plan reopen` commands.
 - 2026-03-09: Kept manual queue actions split cleanly between `plan.json` focus changes and append-only finding status events in `findings.jsonl`.
 - 2026-03-09: Added tests covering direct-id focus, cluster focus, append-only resolution events, attestation enforcement, and reopen behavior.
+- 2026-03-09: Tightened S04 after review so `plan resolve` only operates on currently actionable queue items, and added clearer CLI help for repetitive operator flows.
 
 ## Discoveries
 
@@ -90,6 +91,9 @@ spec sections to PR-sized implementation units.
   focus changes, `next`, and post-resolution refocusing drift apart.
 - `reopen` is low-risk when it is scoped to previously resolved statuses and
   simply appends a new `open` event plus a plan focus update.
+- Queue commands need to stay queue-scoped; once a finding is already resolved,
+  further status edits should go through a reopen step rather than another
+  resolve action.
 
 ## Decision Log
 
@@ -107,6 +111,9 @@ spec sections to PR-sized implementation units.
   mutate plan state ad hoc.
 - 2026-03-09: Include `reopen` in S04 because it reuses the existing status
   event model cleanly and closes the loop on mistaken manual resolutions.
+- 2026-03-09: Treat `plan resolve` as a queue operation, not a general status
+  editor, so it must reject non-actionable findings even though the event log
+  itself remains append-only.
 
 ## Outcomes / Retrospective
 

@@ -604,6 +604,57 @@ def test_record_plan_resolution_requires_attestation_for_non_trivial_results(
         raise AssertionError("Expected attestation validation to fail.")
 
 
+def test_record_plan_resolution_rejects_non_actionable_findings(tmp_path) -> None:
+    state_dir = tmp_path / ".docgarden"
+    ensure_state_dirs(state_dir)
+    findings_path = state_dir / "findings.jsonl"
+    plan_path = state_dir / "plan.json"
+
+    context = FindingContext(
+        rel_path="docs/index.md",
+        domain="docs",
+        discovered_at="2026-03-08T12:00:00",
+    )
+    finding = Finding.open_issue(
+        context,
+        kind="missing-sections",
+        severity="medium",
+        summary="Missing headings.",
+        evidence=["Missing headings: Scope"],
+        recommended_action="Add the missing section.",
+        safe_to_autofix=True,
+        cluster="structure-gaps",
+        suffix="sections",
+    )
+
+    append_scan_events(findings_path, [finding], datetime(2026, 3, 8, 12, 0, 0))
+    write_json(
+        plan_path,
+        asdict(build_plan([finding], "abc123", datetime(2026, 3, 8, 12, 5, 0))),
+    )
+    record_plan_resolution(
+        plan_path,
+        findings_path,
+        finding.id,
+        status="fixed",
+        event_at=datetime(2026, 3, 8, 12, 10, 0),
+    )
+
+    try:
+        record_plan_resolution(
+            plan_path,
+            findings_path,
+            finding.id,
+            status="accepted_debt",
+            event_at=datetime(2026, 3, 8, 12, 15, 0),
+            attestation="This should fail because the finding already left the queue.",
+        )
+    except StateError as exc:
+        assert str(exc) == f"Cannot resolve non-actionable finding: {finding.id}."
+    else:
+        raise AssertionError("Expected non-actionable resolution validation to fail.")
+
+
 def test_reopen_plan_finding_reopens_resolved_event_and_refocuses(tmp_path) -> None:
     state_dir = tmp_path / ".docgarden"
     ensure_state_dirs(state_dir)

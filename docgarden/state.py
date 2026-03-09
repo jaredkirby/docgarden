@@ -168,6 +168,22 @@ def _copy_plan_state(
     )
 
 
+def _ensure_actionable_queue_finding(
+    plan: PlanState,
+    latest: dict[str, dict[str, Any]],
+    finding_id: str,
+) -> None:
+    prior = latest.get(finding_id)
+    if prior is None:
+        raise StateError(f"Cannot update unknown finding: {finding_id}.")
+    if not _is_actionable_event(prior):
+        raise StateError(f"Cannot resolve non-actionable finding: {finding_id}.")
+
+    queued_ids = set(_ordered_actionable_ids(plan, latest, include_deferred=True))
+    if finding_id not in queued_ids:
+        raise StateError(f"Cannot resolve finding outside the current queue: {finding_id}.")
+
+
 def ordered_active_events(paths: RepoPaths) -> list[dict[str, Any]]:
     latest = latest_events_by_id(load_findings_history(paths.findings))
     plan = load_plan(paths.plan) if paths.plan.exists() else None
@@ -545,6 +561,10 @@ def record_plan_resolution(
     if status not in PLAN_RESOLVE_FINDING_STATUSES:
         raise StateError(f"Unsupported plan resolve result: {status}.")
 
+    plan = load_plan(plan_path)
+    latest = latest_events_by_id(load_findings_history(findings_path))
+    _ensure_actionable_queue_finding(plan, latest, finding_id)
+
     event = append_finding_status_event(
         findings_path,
         finding_id,
@@ -554,7 +574,6 @@ def record_plan_resolution(
         resolved_by=resolved_by,
         resolution_note=resolution_note,
     )
-    plan = load_plan(plan_path)
     latest = latest_events_by_id(load_findings_history(findings_path))
     deferred_items = [
         queued_id for queued_id in plan.deferred_items if queued_id != finding_id

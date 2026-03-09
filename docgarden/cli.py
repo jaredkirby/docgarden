@@ -38,28 +38,68 @@ def build_parser() -> argparse.ArgumentParser:
     plan = subparsers.add_parser("plan")
     plan.set_defaults(func=command_plan)
     plan_subparsers = plan.add_subparsers(dest="plan_command")
-    plan_triage = plan_subparsers.add_parser("triage")
+    plan_triage = plan_subparsers.add_parser(
+        "triage",
+        help="Record observe, reflect, or organize notes in plan.json.",
+    )
     plan_triage.add_argument(
         "--stage",
         choices=["observe", "reflect", "organize"],
         required=True,
+        help="Workflow stage to record in the persisted plan state.",
     )
-    plan_triage.add_argument("--report", required=True)
+    plan_triage.add_argument(
+        "--report",
+        required=True,
+        help="Non-empty stage note to store for the selected triage stage.",
+    )
     plan_triage.set_defaults(func=command_plan_triage)
-    plan_focus = plan_subparsers.add_parser("focus")
-    plan_focus.add_argument("target")
+    plan_focus = plan_subparsers.add_parser(
+        "focus",
+        help="Set current_focus to an actionable finding ID or cluster name.",
+    )
+    plan_focus.add_argument(
+        "target",
+        help="Actionable finding ID or cluster name from `docgarden plan`.",
+    )
     plan_focus.set_defaults(func=command_plan_focus)
-    plan_resolve = plan_subparsers.add_parser("resolve")
-    plan_resolve.add_argument("finding_id")
+    plan_resolve = plan_subparsers.add_parser(
+        "resolve",
+        help=(
+            "Write a new status event for an actionable queue item and update "
+            "current_focus."
+        ),
+        description=(
+            "Resolve an actionable queue item. `needs_human` stays actionable; "
+            "`accepted_debt`, `needs_human`, and `false_positive` require "
+            "`--attest`."
+        ),
+    )
+    plan_resolve.add_argument(
+        "finding_id",
+        help="Actionable finding ID from the current queue.",
+    )
     plan_resolve.add_argument(
         "--result",
         choices=PLAN_RESOLVE_FINDING_STATUSES,
         required=True,
+        help="Queue result to record; `needs_human` stays actionable.",
     )
-    plan_resolve.add_argument("--attest")
+    plan_resolve.add_argument(
+        "--attest",
+        help=(
+            "Required for `accepted_debt`, `needs_human`, and `false_positive`."
+        ),
+    )
     plan_resolve.set_defaults(func=command_plan_resolve)
-    plan_reopen = plan_subparsers.add_parser("reopen")
-    plan_reopen.add_argument("finding_id")
+    plan_reopen = plan_subparsers.add_parser(
+        "reopen",
+        help="Reopen a previously resolved finding by appending a new open event.",
+    )
+    plan_reopen.add_argument(
+        "finding_id",
+        help="Previously resolved finding ID to return to the queue.",
+    )
     plan_reopen.set_defaults(func=command_plan_reopen)
 
     show = subparsers.add_parser("show")

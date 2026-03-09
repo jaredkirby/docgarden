@@ -5,7 +5,7 @@ from dataclasses import asdict
 from datetime import datetime
 from pathlib import Path
 
-from docgarden.cli import main
+from docgarden.cli import build_parser, main
 from docgarden.cli_commands import repo_paths
 from docgarden.scan_workflow import run_scan
 from docgarden.state import (
@@ -800,6 +800,128 @@ Text.
     assert main(["next"]) == 0
     next_payload = json.loads(capsys.readouterr().out)
     assert next_payload["id"] == finding_id
+
+
+def test_cli_plan_resolve_rejects_non_actionable_finding_ids(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    repo = make_repo(tmp_path)
+    write(
+        repo / "docs" / "index.md",
+        CANONICAL_FRONTMATTER
+        + """
+# Docs Index
+
+See [Stale](stale.md).
+
+## Purpose
+Text.
+
+## Scope
+Text.
+
+## Source of Truth
+Text.
+
+## Rules / Definitions
+Text.
+
+## Exceptions / Caveats
+Text.
+
+## Validation / How to verify
+Text.
+
+## Related docs
+Text.
+""",
+    )
+    write(
+        repo / "docs" / "stale.md",
+        CANONICAL_FRONTMATTER.replace("docs-index", "stale-doc").replace(
+            "2026-03-08", "2026-01-01"
+        )
+        + """
+# Stale Doc
+
+## Purpose
+Text.
+
+## Scope
+Text.
+
+## Source of Truth
+Text.
+
+## Rules / Definitions
+Text.
+
+## Exceptions / Caveats
+Text.
+
+## Validation / How to verify
+Text.
+
+## Related docs
+Text.
+""",
+    )
+    monkeypatch.chdir(repo)
+
+    assert main(["scan"]) == 0
+    capsys.readouterr()
+
+    paths = repo_paths(repo)
+    finding_id = load_plan(paths.plan).current_focus
+    assert finding_id is not None
+
+    assert main(["plan", "resolve", finding_id, "--result", "fixed"]) == 0
+    capsys.readouterr()
+
+    assert (
+        main(
+            [
+                "plan",
+                "resolve",
+                finding_id,
+                "--result",
+                "accepted_debt",
+                "--attest",
+                "Should fail because the finding is already resolved.",
+            ]
+        )
+        == 1
+    )
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert f"Cannot resolve non-actionable finding: {finding_id}." in captured.err
+
+
+def test_cli_plan_subcommand_help_mentions_queue_rules(capsys) -> None:
+    parser = build_parser()
+
+    try:
+        parser.parse_args(["plan", "focus", "--help"])
+    except SystemExit as exc:
+        assert exc.code == 0
+    else:
+        raise AssertionError("Expected argparse help to exit cleanly.")
+
+    focus_help = capsys.readouterr().out
+    assert "Actionable finding ID or cluster name" in focus_help
+
+    try:
+        parser.parse_args(["plan", "resolve", "--help"])
+    except SystemExit as exc:
+        assert exc.code == 0
+    else:
+        raise AssertionError("Expected argparse help to exit cleanly.")
+
+    resolve_help = capsys.readouterr().out
+    assert "Resolve an actionable queue item." in resolve_help
+    assert "`needs_human` stays" in resolve_help
+    assert "accepted_debt" in resolve_help
+    assert "false_positive" in resolve_help
 
 
 def test_cli_config_show_reports_invalid_config_with_nonzero_exit(

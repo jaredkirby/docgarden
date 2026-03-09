@@ -68,7 +68,7 @@ criteria rather than re-explaining the whole product vision.
 | S01 | completed | First alignment checks | S00 |
 | S02 | completed | Findings lifecycle with attestation-ready state | S00 |
 | S03 | completed | Plan triage commands and lifecycle stages | S02 |
-| S04 | queued | Focus and resolve queue operations | S02, S03 |
+| S04 | completed | Focus and resolve queue operations | S02, S03 |
 | S05 | queued | Changed-scope scans | S00 |
 | S06 | queued | Generated-doc contract checks | S00 |
 | S07 | queued | Workflow drift detector | S01 |
@@ -89,13 +89,14 @@ The repo has already shipped the Phase 1 core:
 - score publication to `docs/QUALITY_SCORE.md`
 - narrow safe autofix for stale status and missing headings
 
-The repo has also completed the first three generic Phase 2 slices:
+The repo has also completed the first four generic Phase 2 slices:
 
 - missing local `source_of_truth` artifact checks
 - unsupported `docgarden` validation command checks on non-draft docs
 - findings lifecycle statuses beyond `open` and `fixed`
 - attestation-ready status metadata in append-only findings history
 - plan triage stages with persisted stage notes and lifecycle state
+- focus, resolve, and reopen queue operations with append-only status events
 
 ## Atomic slices
 
@@ -188,7 +189,7 @@ Acceptance:
 
 ### S04: Focus and resolve queue operations
 
-Status: `queued`
+Status: `completed`
 
 Goal:
 - Make the queue actionable instead of read-only.
