@@ -104,6 +104,7 @@ spec sections to PR-sized implementation units.
 - 2026-03-09: Implemented S13 with `docgarden pr draft`, which runs a fresh scan, summarizes active findings alongside current non-transient git changes, and can optionally draft unsafe-work follow-up issues instead of PRs.
 - 2026-03-09: Kept S13 fail-closed by requiring explicit `.docgarden/config.yaml` repo support plus a configured token env var before any GitHub draft PR or issue publish path will run.
 - 2026-03-09: Tightened S13 after review so PR publish mode now refuses zero-finding drafts, and added direct coverage plus README guidance for the `--unsafe-as-issue --publish` path creating a normal GitHub issue.
+- 2026-03-09: Tightened S13 again so `docgarden pr draft` now summarizes only actionable queue findings, leaving `accepted_debt`, `fixed`, and `false_positive` items out of both local draft text and remote publish scope.
 
 ## Discoveries
 
@@ -219,6 +220,9 @@ spec sections to PR-sized implementation units.
 - Local draft previews can still be useful on a clean repo, but publish mode
   needs a stricter contract: a fix-up PR without in-scope findings is better
   treated as a non-publishable preview than as remote automation.
+- Draft automation should follow the operator queue, not the score-tracking
+  set; including `accepted_debt` in PR or issue scope makes the summary drift
+  away from the work a human has actually left open.
 
 ## Decision Log
 

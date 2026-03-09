@@ -34,7 +34,7 @@ from .slices import (
     run_slice_loop,
 )
 from .state import (
-    active_findings_from_latest_events,
+    actionable_findings_from_latest_events,
     ensure_state_dirs,
     import_review,
     load_findings_history,
@@ -326,11 +326,11 @@ def command_pr_draft(args: argparse.Namespace) -> None:
     paths = repo_paths(Path.cwd())
     result = run_scan(paths)
     config = Config.load(paths.config)
-    active_findings = active_findings_from_latest_events(result.latest_events)
+    actionable_findings = actionable_findings_from_latest_events(result.latest_events)
     payload = build_pr_draft_payload(
         paths.repo_root,
         config,
-        active_findings,
+        actionable_findings,
         unsafe_as_issue=args.unsafe_as_issue,
     )
     if args.publish:

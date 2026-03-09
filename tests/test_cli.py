@@ -634,6 +634,76 @@ Text.
     assert "past its review cycle" not in payload["body"]
 
 
+def test_cli_pr_draft_omits_accepted_debt_findings_from_scope(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    repo = make_repo(tmp_path)
+    init_git_repo(repo)
+    write(
+        repo / "docs" / "stale.md",
+        CANONICAL_FRONTMATTER.replace("docs-index", "stale-doc").replace(
+            "2026-03-08", "2026-01-01"
+        )
+        + """
+# Stale Doc
+
+## Purpose
+Text.
+
+## Scope
+Text.
+
+## Source of Truth
+Text.
+
+## Rules / Definitions
+Text.
+
+## Exceptions / Caveats
+Text.
+
+## Validation / How to verify
+Text.
+
+## Related docs
+Text.
+""",
+    )
+    write(repo / "docs" / "notes.md", "# Scratch Notes\n\nMissing frontmatter.\n")
+    monkeypatch.chdir(repo)
+
+    assert main(["scan"]) == 0
+    capsys.readouterr()
+
+    paths = repo_paths(repo)
+    stale_finding = next(
+        event
+        for event in load_findings_history(paths.findings)
+        if event["kind"] == "stale-review"
+    )
+    append_finding_status_event(
+        paths.findings,
+        stale_finding["id"],
+        status="accepted_debt",
+        event_at=datetime(2026, 3, 8, 13, 0, 0),
+        attestation="Known stale doc accepted until manual review lands.",
+        resolved_by="kirby",
+    )
+
+    assert main(["pr", "draft"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+
+    assert stale_finding["id"] not in payload["finding_ids"]
+    assert all(
+        finding["status"] in {"open", "in_progress", "needs_human"}
+        for finding in payload["findings"]
+    )
+    assert "accepted_debt" not in payload["body"]
+    assert "missing-frontmatter" in {
+        finding["kind"] for finding in payload["findings"]
+    }
+
+
 def test_cli_pr_draft_publish_requires_explicit_support_and_credentials(
     tmp_path, monkeypatch, capsys
 ) -> None:
@@ -704,7 +774,7 @@ pr_drafts:
     assert preview_payload["finding_count"] == 0
     assert preview_payload["publish_ready"] is False
     assert any(
-        "at least one active finding in scope" in blocker
+        "at least one actionable finding in scope" in blocker
         for blocker in preview_payload["publish_blockers"]
     )
 
@@ -712,7 +782,7 @@ pr_drafts:
     error_output = capsys.readouterr().err
 
     assert "Cannot publish draft" in error_output
-    assert "at least one active finding in scope" in error_output
+    assert "at least one actionable finding in scope" in error_output
 
 
 def test_cli_pr_draft_publish_reports_remote_result(

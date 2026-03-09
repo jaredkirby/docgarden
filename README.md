@@ -122,12 +122,15 @@ to a full `docgarden scan` before treating the score, queue, or persisted state
 as authoritative.
 
 `docgarden pr draft` runs a fresh full scan, then builds a markdown-ready draft
-summary from the current active findings plus current non-transient git changes.
+summary from the current actionable findings (`open`, `in_progress`, and
+`needs_human`) plus current non-transient git changes. Resolved states such as
+`accepted_debt`, `fixed`, and `false_positive` are left out of the draft scope.
 The JSON output includes the generated title/body, the exact finding ids in
 scope, the changed files list, and explicit publish blockers when remote
-automation is not configured or when PR mode has no active findings in scope.
+automation is not configured or when PR mode has no actionable findings in
+scope.
 
-Use `docgarden pr draft --unsafe-as-issue` when the active findings are not
+Use `docgarden pr draft --unsafe-as-issue` when the actionable findings are not
 safe to autofix and you want a follow-up issue draft instead of a PR draft.
 With `--publish`, that path creates a normal GitHub issue, because GitHub does
 not have a draft-issue object.

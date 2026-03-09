@@ -194,18 +194,21 @@ def current_branch_name(repo_root: Path) -> str | None:
 def build_pr_draft_payload(
     repo_root: Path,
     config: Config,
-    active_findings: list[Finding],
+    actionable_findings: list[Finding],
     *,
     unsafe_as_issue: bool,
 ) -> dict[str, Any]:
     target = DraftPublishTarget.from_config(config)
     changed_files, deleted_files, notes = collect_changed_files(repo_root)
     branch_name = current_branch_name(repo_root)
-    unsafe_findings = [finding for finding in active_findings if not finding.safe_to_autofix]
-    selected_findings = unsafe_findings if unsafe_as_issue else active_findings
+    unsafe_findings = [
+        finding for finding in actionable_findings if not finding.safe_to_autofix
+    ]
+    selected_findings = unsafe_findings if unsafe_as_issue else actionable_findings
     if unsafe_as_issue and not selected_findings:
         raise DocgardenError(
-            "No unsafe active findings are available for `docgarden pr draft --unsafe-as-issue`."
+            "No unsafe actionable findings are available for "
+            "`docgarden pr draft --unsafe-as-issue`."
         )
 
     mode = "issue" if unsafe_as_issue else "pr"
@@ -236,11 +239,14 @@ def build_pr_draft_payload(
         "summary": summary,
         "title": title,
         "body": body,
-        "total_active_findings": len(active_findings),
+        "total_actionable_findings": len(actionable_findings),
+        "total_active_findings": len(actionable_findings),
         "finding_count": len(selected_findings),
         "finding_ids": [finding.id for finding in selected_findings],
         "findings": [_finding_payload(finding) for finding in selected_findings],
-        "safe_finding_ids": [finding.id for finding in active_findings if finding.safe_to_autofix],
+        "safe_finding_ids": [
+            finding.id for finding in actionable_findings if finding.safe_to_autofix
+        ],
         "unsafe_finding_ids": [finding.id for finding in unsafe_findings],
         "changed_files": changed_files,
         "deleted_files": deleted_files,
@@ -329,9 +335,9 @@ def _draft_publish_blockers(
     blockers = list(target.publish_blockers())
     if mode == "pr" and finding_count == 0:
         blockers.append(
-            "Draft PR publish requires at least one active finding in scope. "
+            "Draft PR publish requires at least one actionable finding in scope. "
             "Run `docgarden pr draft` without `--publish` for a local preview, "
-            "or wait until the next scan reports active findings."
+            "or wait until the next scan reports actionable findings."
         )
     return blockers
 
@@ -343,7 +349,7 @@ def _draft_summary(
     changed_file_count: int,
     deleted_file_count: int,
 ) -> str:
-    noun = "unsafe finding" if mode == "issue" else "active finding"
+    noun = "unsafe actionable finding" if mode == "issue" else "actionable finding"
     draft_kind = "issue" if mode == "issue" else "PR"
     deleted_fragment = (
         f" and {deleted_file_count} deleted file(s)"
@@ -384,7 +390,7 @@ def _draft_body(
     if findings:
         lines.extend(_finding_markdown_line(finding) for finding in findings)
     else:
-        lines.append("- No active findings are currently recorded.")
+        lines.append("- No actionable findings are currently recorded.")
 
     lines.extend(["", "## Changed files"])
     if changed_files:
@@ -402,9 +408,9 @@ def _draft_body(
                 "",
                 "## Unsafe follow-up",
                 (
-                    f"- {unsafe_finding_count} active finding(s) are not marked safe to "
-                    "autofix. Run `docgarden pr draft --unsafe-as-issue` to prepare a "
-                    "follow-up issue instead of a PR."
+                    f"- {unsafe_finding_count} actionable finding(s) are not marked "
+                    "safe to autofix. Run `docgarden pr draft --unsafe-as-issue` to "
+                    "prepare a follow-up issue instead of a PR."
                 ),
             ]
         )

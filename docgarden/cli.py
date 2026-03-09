@@ -199,9 +199,9 @@ def build_parser() -> argparse.ArgumentParser:
     pr_draft = pr_subparsers.add_parser(
         "draft",
         help=(
-            "Generate a human-readable markdown summary from active findings and "
-            "current changed files. Add `--publish` only when repo support and "
-            "credentials are configured explicitly."
+            "Generate a human-readable markdown summary from actionable findings "
+            "and current changed files. Add `--publish` only when repo support "
+            "and credentials are configured explicitly."
         ),
     )
     pr_draft.add_argument(
