@@ -73,6 +73,8 @@ spec sections to PR-sized implementation units.
 - 2026-03-09: Implemented S05 changed-scope scans with `docgarden scan --scope changed`, including git-derived doc selection plus an explicit `--files` override for CI-style callers.
 - 2026-03-09: Kept full scans as the only authoritative state refresh and made changed-scope output explicitly list the recomputed checks, skipped repo-wide views, and any last full-scan score baseline.
 - 2026-03-09: Added tests covering git-derived changed scans, explicit file-list scans, subset-only detector execution, validation failures for non-doc paths, and read-only partial-scan behavior against persisted `.docgarden` state.
+- 2026-03-09: Tightened S05 after review so changed-scope scans do not even create `.docgarden/` on first use, and explicit `--files` inputs now fail fast on missing doc-shaped paths instead of inferring deletions.
+- 2026-03-09: Documented the git-derived changed-set rule in CLI help, scan output notes, and the README so operators can predict which files `--scope changed` will inspect.
 
 ## Discoveries
 
@@ -109,6 +111,12 @@ spec sections to PR-sized implementation units.
 - CI-oriented changed-file inputs do not need a separate file-of-paths format
   yet; a direct `--files` list is enough for this slice and keeps the product
   surface small.
+- "Read-only partial scan" needs to be interpreted literally: even creating the
+  state-directory skeleton is a surprising side effect when no durable state is
+  supposed to change.
+- Explicit file lists are more predictable when they mean "existing files to
+  scan now" only; deletions should stay a git-derived concern unless the CLI
+  grows a separate explicit deleted-path input.
 
 ## Decision Log
 
@@ -135,6 +143,11 @@ spec sections to PR-sized implementation units.
 - 2026-03-09: Skip duplicate-doc-id, broken-route, and orphan-doc recomputation
   during changed-scope scans instead of approximating them from stale global
   state, and report those omissions explicitly in the CLI output.
+- 2026-03-09: Make changed-scope command setup avoid `ensure_state_dirs()` so a
+  first-use partial scan leaves no `.docgarden/` footprint behind.
+- 2026-03-09: Define explicit `--files` as an existing-doc list only; missing
+  paths are validation errors, while deleted docs remain discoverable through
+  git-derived changed scope.
 
 ## Outcomes / Retrospective
 

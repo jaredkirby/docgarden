@@ -165,6 +165,11 @@ Text.
     assert payload["deleted_files"] == []
     assert "repo-wide orphan-doc checks" in payload["skipped_views"]
     assert any(
+        "Git-derived changed scope includes unstaged, staged, untracked, and deleted"
+        in note
+        for note in payload["notes"]
+    )
+    assert any(
         "do not rewrite `.docgarden/findings.jsonl`" in note
         for note in payload["notes"]
     )
@@ -257,13 +262,48 @@ Text.
     assert payload["changed_files_source"] == "files"
     assert payload["requested_files"] == ["docs/extra.md"]
     assert payload["scanned_files"] == ["docs/extra.md"]
+    assert payload["deleted_files"] == []
     assert payload["findings"] == 1
+    assert any(
+        "do not infer deletions" in note for note in payload["notes"]
+    )
 
     assert main(["scan", "--scope", "changed", "--files", "README.md"]) == 1
     assert (
         "Changed-scope paths must be `AGENTS.md` or markdown files under `docs/`"
         in capsys.readouterr().err
     )
+
+    assert main(["scan", "--scope", "changed", "--files", "docs/missing.md"]) == 1
+    assert (
+        "Explicit `--files` entries must point to existing docs."
+        in capsys.readouterr().err
+    )
+
+
+def test_cli_scan_changed_scope_does_not_create_state_dir(tmp_path, monkeypatch, capsys) -> None:
+    write(
+        tmp_path / "AGENTS.md",
+        "# AGENTS.md\n\n- Overview: docs/index.md\n",
+    )
+    write(
+        tmp_path / "docs" / "index.md",
+        CANONICAL_FRONTMATTER
+        + """
+# Docs Index
+
+## Purpose
+Text.
+""",
+    )
+    monkeypatch.chdir(tmp_path)
+
+    assert not (tmp_path / ".docgarden").exists()
+    assert main(["scan", "--scope", "changed", "--files", "docs/index.md"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+
+    assert payload["scope"] == "changed"
+    assert not (tmp_path / ".docgarden").exists()
 
 
 def test_cli_commands_module_is_directly_exercised(tmp_path) -> None:

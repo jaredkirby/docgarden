@@ -26,19 +26,29 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="docgarden")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
-    scan = subparsers.add_parser("scan")
+    scan = subparsers.add_parser(
+        "scan",
+        description=(
+            "Scan the full repo or a changed-doc subset. Changed scope uses "
+            "local git state (unstaged, staged, untracked, and deleted doc "
+            "paths under `AGENTS.md` and `docs/`) unless `--files` is passed."
+        ),
+    )
     scan.add_argument(
         "--scope",
         choices=["all", "changed"],
         default="all",
-        help="Scan the whole repo or only the changed doc subset.",
+        help=(
+            "Scan the whole repo or only the changed doc subset derived from "
+            "local git state or `--files`."
+        ),
     )
     scan.add_argument(
         "--files",
         nargs="+",
         help=(
-            "Repo-relative doc files to treat as changed. Only valid with "
-            "`--scope changed`."
+            "Existing repo-relative doc files to treat as changed. Only valid "
+            "with `--scope changed`."
         ),
     )
     scan.set_defaults(func=command_scan)

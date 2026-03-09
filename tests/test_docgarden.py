@@ -118,6 +118,12 @@ Text.
         with self.assertRaises(DocgardenError):
             determine_changed_docs(repo, provided_files=["README.md"])
 
+    def test_determine_changed_docs_rejects_missing_explicit_files(self) -> None:
+        repo = self.make_repo()
+
+        with self.assertRaises(DocgardenError):
+            determine_changed_docs(repo, provided_files=["docs/missing.md"])
+
     def test_safe_fix_marks_stale_doc_needs_review(self) -> None:
         repo = self.make_repo()
         write(

@@ -204,19 +204,29 @@ def determine_changed_docs(
     if provided_files is None:
         return _changed_doc_paths_from_git(repo_root)
 
-    normalized = [
-        _normalize_repo_relative_path(repo_root, raw_path) for raw_path in provided_files
+    normalized = _dedupe_preserving_order(
+        [
+            _normalize_repo_relative_path(repo_root, raw_path)
+            for raw_path in provided_files
+        ]
+    )
+    missing_files = [path for path in normalized if not (repo_root / path).exists()]
+    if missing_files:
+        missing_display = ", ".join(missing_files)
+        raise DocgardenError(
+            "Explicit `--files` entries must point to existing docs. "
+            "Use local git-derived changed scope to include deletions. "
+            f"Missing: {missing_display}."
+        )
+    notes = [
+        "Explicit `--files` scope scans only the listed existing docs and do "
+        "not infer deletions."
     ]
-    scanned_files = [path for path in normalized if (repo_root / path).exists()]
-    deleted_files = [path for path in normalized if not (repo_root / path).exists()]
-    notes: list[str] = []
-    if not scanned_files and not deleted_files:
-        notes.append("The provided changed-file list did not contain any doc files.")
     return ChangedScopeSelection(
         source="files",
-        requested_files=_dedupe_preserving_order(normalized),
-        scanned_files=_dedupe_preserving_order(scanned_files),
-        deleted_files=_dedupe_preserving_order(deleted_files),
+        requested_files=normalized,
+        scanned_files=normalized,
+        deleted_files=[],
         notes=notes,
     )
 

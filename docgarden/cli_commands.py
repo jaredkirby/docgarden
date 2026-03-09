@@ -29,9 +29,10 @@ from .state import (
 )
 
 
-def repo_paths(repo_root: Path) -> RepoPaths:
+def repo_paths(repo_root: Path, *, ensure_state: bool = True) -> RepoPaths:
     state_dir = repo_root / ".docgarden"
-    ensure_state_dirs(state_dir)
+    if ensure_state:
+        ensure_state_dirs(state_dir)
     return RepoPaths(
         repo_root=repo_root,
         state_dir=state_dir,
@@ -54,11 +55,11 @@ def _current_actor() -> str | None:
 
 
 def command_scan(args: argparse.Namespace) -> None:
-    paths = repo_paths(Path.cwd())
     if args.scope != "changed" and args.files:
         raise DocgardenError("`docgarden scan --files` requires `--scope changed`.")
 
     if args.scope == "changed":
+        paths = repo_paths(Path.cwd(), ensure_state=False)
         result = run_changed_scan(paths, changed_files=args.files)
         previous_score = load_score(paths.score)
         payload = {
@@ -81,6 +82,7 @@ def command_scan(args: argparse.Namespace) -> None:
             "notes": result.notes,
         }
     else:
+        paths = repo_paths(Path.cwd())
         result = run_scan(paths)
         payload = {
             "scope": result.scope,

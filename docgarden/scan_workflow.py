@@ -95,6 +95,12 @@ def run_changed_scan(
     selection = determine_changed_docs(paths.repo_root, provided_files=changed_files)
     findings, _, _ = scan_changed_files(paths.repo_root, selection=selection)
     notes = list(selection.notes)
+    if selection.source == "git":
+        notes.insert(
+            0,
+            "Git-derived changed scope includes unstaged, staged, untracked, "
+            "and deleted doc paths under `AGENTS.md` and `docs/`.",
+        )
     notes.append(
         "Changed-scope scans do not rewrite `.docgarden/findings.jsonl`, "
         "`plan.json`, or `score.json`."

@@ -8,6 +8,8 @@ findings, and offers a narrow safe-fix path for mechanical hygiene issues.
 
 ```bash
 docgarden scan
+docgarden scan --scope changed
+docgarden scan --scope changed --files docs/index.md docs/workflows/reporting.md
 docgarden status
 docgarden next
 docgarden plan
@@ -17,6 +19,14 @@ docgarden fix safe --apply
 docgarden config show
 docgarden doctor
 ```
+
+`docgarden scan --scope changed` is a fast partial preview. By default it uses
+local git state and scans the union of unstaged changes, staged changes,
+untracked docs, and deleted doc paths under `AGENTS.md` and `docs/`.
+
+`docgarden scan --scope changed --files ...` scans only the listed existing doc
+paths. It does not infer deletions, does not rewrite `.docgarden` state, and
+returns the last full-scan score only as a baseline reference.
 
 ## MVP scope
 
