@@ -15,7 +15,7 @@
       "status": "high trust"
     },
     "exec-plans": {
-      "doc_count": 2,
+      "doc_count": 3,
       "findings": 0,
       "score": 100,
       "status": "high trust"
@@ -27,5 +27,5 @@
   "trend": {
     "points": []
   },
-  "updated_at": "2026-03-08T10:56:18"
+  "updated_at": "2026-03-08T16:55:18"
 }
