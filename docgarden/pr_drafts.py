@@ -133,29 +133,26 @@ def _should_include_changed_path(rel_path: str) -> bool:
 
 
 def collect_changed_files(repo_root: Path) -> tuple[list[str], list[str], list[str]]:
-    try:
-        tracked_existing = _run_git_path_query(
-            repo_root,
-            ["diff", "--name-only", "--diff-filter=ACMR", "--relative"],
-        )
-        staged_existing = _run_git_path_query(
-            repo_root,
-            ["diff", "--cached", "--name-only", "--diff-filter=ACMR", "--relative"],
-        )
-        untracked = _run_git_path_query(
-            repo_root,
-            ["ls-files", "--others", "--exclude-standard"],
-        )
-        tracked_deleted = _run_git_path_query(
-            repo_root,
-            ["diff", "--name-only", "--diff-filter=D", "--relative"],
-        )
-        staged_deleted = _run_git_path_query(
-            repo_root,
-            ["diff", "--cached", "--name-only", "--diff-filter=D", "--relative"],
-        )
-    except DocgardenError as exc:
-        return [], [], [str(exc)]
+    tracked_existing = _run_git_path_query(
+        repo_root,
+        ["diff", "--name-only", "--diff-filter=ACMR", "--relative"],
+    )
+    staged_existing = _run_git_path_query(
+        repo_root,
+        ["diff", "--cached", "--name-only", "--diff-filter=ACMR", "--relative"],
+    )
+    untracked = _run_git_path_query(
+        repo_root,
+        ["ls-files", "--others", "--exclude-standard"],
+    )
+    tracked_deleted = _run_git_path_query(
+        repo_root,
+        ["diff", "--name-only", "--diff-filter=D", "--relative"],
+    )
+    staged_deleted = _run_git_path_query(
+        repo_root,
+        ["diff", "--cached", "--name-only", "--diff-filter=D", "--relative"],
+    )
 
     changed_files = _dedupe_preserving_order(
         [

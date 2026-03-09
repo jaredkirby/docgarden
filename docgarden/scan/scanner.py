@@ -1,16 +1,17 @@
 from __future__ import annotations
 
 from collections import Counter, defaultdict
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 from pathlib import Path
 import re
 import subprocess
 
-from .errors import DocgardenError
-from .markdown import Document, normalize_heading, parse_document, resolve_link_target
-from .models import Finding
-from .scan_document_rules import (
+from ..errors import DocgardenError
+from ..markdown import Document, normalize_heading, parse_document, resolve_link_target
+from ..models import Finding
+from .document_rules import (
     ALLOWED_STATUS,
     REQUIRED_METADATA,
     REQUIRED_SECTIONS,
@@ -23,10 +24,10 @@ from .scan_document_rules import (
     stale_review_finding,
     verified_without_sources_finding,
 )
-from .scan_alignment import alignment_findings
-from .scan_alignment import deterministic_internal_reference_replacement
-from .scan_alignment import promotion_suggestion_findings
-from .scan_linkage import (
+from .alignment import alignment_findings
+from .alignment import deterministic_internal_reference_replacement
+from .alignment import promotion_suggestion_findings
+from .linkage import (
     append_inbound_link,
     broken_route_findings,
     collect_domain_doc_counts,
@@ -58,6 +59,32 @@ class ChangedScopeSelection:
     scanned_files: list[str]
     deleted_files: list[str]
     notes: list[str] = field(default_factory=list)
+
+
+@dataclass(slots=True)
+class DocumentScanContext:
+    document: Document
+    now: datetime
+    repo_root: Path
+    doc_id_counter: Counter[str]
+    inbound_links: defaultdict[str, set[str]]
+    routed_targets: defaultdict[str, set[str]]
+    discovered_at: str
+
+
+@dataclass(slots=True)
+class RepoScanContext:
+    repo_root: Path
+    documents: list[Document]
+    documents_by_rel_path: dict[str, Document]
+    doc_id_counter: Counter[str]
+    inbound_links: defaultdict[str, set[str]]
+    routed_targets: defaultdict[str, set[str]]
+    discovered_at: str
+
+
+DocumentRule = Callable[[DocumentScanContext], list[Finding]]
+RepoRule = Callable[[RepoScanContext], list[Finding]]
 
 
 def discover_markdown_files(repo_root: Path) -> list[Path]:
@@ -377,6 +404,125 @@ def _link_findings(
     return findings
 
 
+def _missing_frontmatter_rule(context: DocumentScanContext) -> list[Finding]:
+    if context.document.frontmatter:
+        return []
+    return [
+        missing_frontmatter_finding(
+            context.document,
+            discovered_at=context.discovered_at,
+        )
+    ]
+
+
+def _metadata_rule(context: DocumentScanContext) -> list[Finding]:
+    return _metadata_findings(
+        context.document,
+        discovered_at=context.discovered_at,
+    )
+
+
+def _section_rule(context: DocumentScanContext) -> list[Finding]:
+    return _section_findings(
+        context.document,
+        discovered_at=context.discovered_at,
+    )
+
+
+def _freshness_rule(context: DocumentScanContext) -> list[Finding]:
+    return _freshness_findings(
+        context.document,
+        now=context.now,
+        discovered_at=context.discovered_at,
+    )
+
+
+def _trust_rule(context: DocumentScanContext) -> list[Finding]:
+    return _trust_findings(
+        context.document,
+        discovered_at=context.discovered_at,
+    )
+
+
+def _alignment_rule(context: DocumentScanContext) -> list[Finding]:
+    return alignment_findings(
+        context.document,
+        repo_root=context.repo_root,
+        discovered_at=context.discovered_at,
+    )
+
+
+def _link_rule(context: DocumentScanContext) -> list[Finding]:
+    return _link_findings(
+        context.document,
+        repo_root=context.repo_root,
+        inbound_links=context.inbound_links,
+        routed_targets=context.routed_targets,
+        discovered_at=context.discovered_at,
+    )
+
+
+DOCUMENT_RULES: tuple[DocumentRule, ...] = (
+    _metadata_rule,
+    _section_rule,
+    _freshness_rule,
+    _trust_rule,
+    _alignment_rule,
+    _link_rule,
+)
+
+
+def _duplicate_doc_id_rule(context: RepoScanContext) -> list[Finding]:
+    return duplicate_doc_id_findings(
+        context.documents,
+        context.doc_id_counter,
+        discovered_at=context.discovered_at,
+    )
+
+
+def _broken_route_rule(context: RepoScanContext) -> list[Finding]:
+    return broken_route_findings(
+        context.repo_root,
+        context.routed_targets,
+        context.inbound_links,
+        documents_by_rel_path=context.documents_by_rel_path,
+        discovered_at=context.discovered_at,
+    )
+
+
+def _route_quality_rule(context: RepoScanContext) -> list[Finding]:
+    return route_quality_findings(
+        context.repo_root,
+        context.documents,
+        discovered_at=context.discovered_at,
+    )
+
+
+def _promotion_rule(context: RepoScanContext) -> list[Finding]:
+    return promotion_suggestion_findings(
+        context.documents,
+        repo_root=context.repo_root,
+        discovered_at=context.discovered_at,
+    )
+
+
+def _orphan_rule(context: RepoScanContext) -> list[Finding]:
+    return orphan_doc_findings(
+        context.documents,
+        context.inbound_links,
+        discovered_at=context.discovered_at,
+    )
+
+
+REPO_RULES: tuple[RepoRule, ...] = (
+    _duplicate_doc_id_rule,
+    _broken_route_rule,
+    _route_quality_rule,
+    _promotion_rule,
+    _orphan_rule,
+)
+
+
 def _default_doc_id(rel_path: str) -> str:
     parts = list(Path(rel_path).with_suffix("").parts)
     if parts[:1] == ["docs"] and len(parts) > 2:
@@ -439,42 +585,23 @@ def _metadata_skeleton_updates(
     return updates
 
 
-def _scan_document(
-    document: Document,
-    *,
-    now: datetime,
-    repo_root: Path,
-    doc_id_counter: Counter[str],
-    inbound_links: defaultdict[str, set[str]],
-    routed_targets: defaultdict[str, set[str]],
-    discovered_at: str,
-) -> list[Finding]:
-    if not document.frontmatter:
-        return [missing_frontmatter_finding(document, discovered_at=discovered_at)]
+def _scan_document(context: DocumentScanContext) -> list[Finding]:
+    preflight_findings = _missing_frontmatter_rule(context)
+    if preflight_findings:
+        return preflight_findings
 
-    _record_doc_id(document, doc_id_counter)
+    _record_doc_id(context.document, context.doc_id_counter)
 
     findings: list[Finding] = []
-    findings.extend(_metadata_findings(document, discovered_at=discovered_at))
-    findings.extend(_section_findings(document, discovered_at=discovered_at))
-    findings.extend(_freshness_findings(document, now=now, discovered_at=discovered_at))
-    findings.extend(_trust_findings(document, discovered_at=discovered_at))
-    findings.extend(
-        alignment_findings(
-            document,
-            repo_root=repo_root,
-            discovered_at=discovered_at,
-        )
-    )
-    findings.extend(
-        _link_findings(
-            document,
-            repo_root=repo_root,
-            inbound_links=inbound_links,
-            routed_targets=routed_targets,
-            discovered_at=discovered_at,
-        )
-    )
+    for rule in DOCUMENT_RULES:
+        findings.extend(rule(context))
+    return findings
+
+
+def _scan_repo_rules(context: RepoScanContext) -> list[Finding]:
+    findings: list[Finding] = []
+    for rule in REPO_RULES:
+        findings.extend(rule(context))
     return findings
 
 
@@ -508,13 +635,15 @@ def scan_changed_files(
             continue
         findings.extend(
             _scan_document(
-                document,
-                now=now,
-                repo_root=repo_root,
-                doc_id_counter=doc_id_counter,
-                inbound_links=inbound_links,
-                routed_targets=routed_targets,
-                discovered_at=discovered_at,
+                DocumentScanContext(
+                    document=document,
+                    now=now,
+                    repo_root=repo_root,
+                    doc_id_counter=doc_id_counter,
+                    inbound_links=inbound_links,
+                    routed_targets=routed_targets,
+                    discovered_at=discovered_at,
+                )
             )
         )
 
@@ -548,51 +677,31 @@ def scan_repo(repo_root: Path) -> tuple[list[Finding], dict[str, int], list[Docu
             continue
         findings.extend(
             _scan_document(
-                document,
-                now=now,
+                DocumentScanContext(
+                    document=document,
+                    now=now,
+                    repo_root=repo_root,
+                    doc_id_counter=doc_id_counter,
+                    inbound_links=inbound_links,
+                    routed_targets=routed_targets,
+                    discovered_at=discovered_at,
+                )
+            )
+        )
+
+    findings.extend(
+        _scan_repo_rules(
+            RepoScanContext(
                 repo_root=repo_root,
+                documents=documents,
+                documents_by_rel_path={
+                    document.rel_path: document for document in documents
+                },
                 doc_id_counter=doc_id_counter,
                 inbound_links=inbound_links,
                 routed_targets=routed_targets,
                 discovered_at=discovered_at,
             )
-        )
-
-    findings.extend(
-        duplicate_doc_id_findings(
-            documents,
-            doc_id_counter,
-            discovered_at=discovered_at,
-        )
-    )
-    findings.extend(
-        broken_route_findings(
-            repo_root,
-            routed_targets,
-            inbound_links,
-            documents_by_rel_path={document.rel_path: document for document in documents},
-            discovered_at=discovered_at,
-        )
-    )
-    findings.extend(
-        route_quality_findings(
-            repo_root,
-            documents,
-            discovered_at=discovered_at,
-        )
-    )
-    findings.extend(
-        promotion_suggestion_findings(
-            documents,
-            repo_root=repo_root,
-            discovered_at=discovered_at,
-        )
-    )
-    findings.extend(
-        orphan_doc_findings(
-            documents,
-            inbound_links,
-            discovered_at=discovered_at,
         )
     )
 

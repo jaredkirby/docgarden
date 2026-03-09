@@ -40,7 +40,7 @@ criteria rather than re-explaining the whole product vision.
 
 - [Docgarden spec](docgarden-spec.md)
 - [Docgarden spec slicing exec plan](../exec-plans/active/2026-03-09-docgarden-spec-slicing.md)
-- [Current scanner](../../docgarden/scanner.py)
+- [Current scanner](../../docgarden/scan/scanner.py)
 
 ## How to use this backlog
 
@@ -128,7 +128,7 @@ Goal:
   and publishes a quality report.
 
 Touches:
-- `docgarden/scanner.py`
+- `docgarden/scan/scanner.py`
 - `docgarden/quality.py`
 - `docgarden/state.py`
 - `docgarden/cli*.py`
@@ -244,7 +244,7 @@ Changes:
 Files likely touched:
 - `docgarden/cli.py`
 - `docgarden/cli_commands.py`
-- `docgarden/scanner.py`
+- `docgarden/scan/scanner.py`
 
 Acceptance:
 - Changed-scope scan only inspects the intended subset.
@@ -268,8 +268,8 @@ Changes:
 - Verify regeneration command presence.
 
 Files likely touched:
-- `docgarden/scan_document_rules.py`
-- `docgarden/scan_alignment.py`
+- `docgarden/scan/document_rules.py`
+- `docgarden/scan/alignment.py`
 - `tests/test_docgarden.py`
 
 Acceptance:
@@ -292,7 +292,7 @@ Changes:
   markdown parser.
 
 Files likely touched:
-- `docgarden/scan_alignment.py`
+- `docgarden/scan/alignment.py`
 - `docgarden/markdown.py`
 - `tests/test_support_modules.py`
 
@@ -315,8 +315,8 @@ Changes:
 - Optionally suggest the canonical replacement when `superseded_by` is present.
 
 Files likely touched:
-- `docgarden/scan_linkage.py`
-- `docgarden/scanner.py`
+- `docgarden/scan/linkage.py`
+- `docgarden/scan/scanner.py`
 - `tests/test_docgarden.py`
 
 Acceptance:
@@ -386,7 +386,7 @@ Changes:
 
 Files likely touched:
 - `docgarden/fixers.py`
-- `docgarden/scan_alignment.py`
+- `docgarden/scan/alignment.py`
 - `tests/test_docgarden.py`
 
 Acceptance:

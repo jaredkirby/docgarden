@@ -1,4 +1,4 @@
-# docgarden 🪴
+# docgarden 🌱
 
 `docgarden` is a repo-local maintenance harness for agent-facing documentation.
 It scans for stale or malformed docs, writes an honest quality score, persists
@@ -185,7 +185,9 @@ current.
 The automation now also lives in a reusable Python module:
 
 ```python
-from docgarden.slices import build_slice_paths, load_slice_catalog, run_slice_loop
+from docgarden.slices.catalog import load_slice_catalog
+from docgarden.slices.config import build_slice_paths
+from docgarden.slices.runner import run_slice_loop
 ```
 
 That makes it usable from other project repos, especially when they want the
@@ -194,13 +196,15 @@ different locations.
 
 `docgarden slices run` automates the worker/reviewer loop by:
 
-1. selecting the next queued or active slice
+1. selecting the next queued or active slice whose dependencies are already completed
 2. generating the implementation prompt
 3. running `codex exec` for the worker with a structured JSON output schema
 4. generating the review prompt for that same slice
 5. running a second `codex exec` reviewer with a structured recommendation schema
 6. feeding reviewer findings back into the worker until the recommendation is
    `ready_for_next_slice`, or stopping on `blocked_pending_product_clarification`
+   or a `stopped_no_progress` guardrail when consecutive review rounds repeat
+   the same findings without material change
 
 Each run writes prompts, schemas, agent outputs, and stdout/stderr logs under
 `.docgarden/slice-loops/` so the loop stays inspectable and restartable by
@@ -210,9 +214,9 @@ As soon as a slice starts, the CLI prints its artifact directory to stderr.
 That makes it easier to inspect a long-running worker in real time instead of
 waiting for the final JSON summary.
 
-Use `docgarden slices run --max-slices 0` to keep advancing until no queued
-slices remain. The safer default is `--max-slices 1`, which automates one slice
-at a time.
+Use `docgarden slices run --max-slices 0` to keep advancing until no
+dependency-ready queued slices remain. The safer default is `--max-slices 1`,
+which automates one slice at a time.
 
 Worker and reviewer runs now use separate default timeouts: 900 seconds for the
 implementation worker and 300 seconds for the reviewer. Use
@@ -248,6 +252,11 @@ operators working in already-dirty repos.
 Expected untracked slice-loop artifact paths are broken out separately as
 `run_artifact_untracked_paths` so retry guidance stays focused on operator
 changes rather than the run directory itself.
+
+Recovery verification also has a bounded timeout now. If `pytest` or
+`docgarden scan` stalls during `docgarden slices recover`, the JSON payload
+returns `timed_out: true` plus the timeout budget instead of hanging the
+operator flow indefinitely.
 
 `run-status.json` now updates during long worker/reviewer runs. The most useful
 live fields are:

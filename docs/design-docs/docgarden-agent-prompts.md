@@ -94,8 +94,8 @@ Required changes:
    present.
 
 Likely files:
-- docgarden/scan_linkage.py
-- docgarden/scanner.py
+- docgarden/scan/linkage.py
+- docgarden/scan/scanner.py
 - tests/test_docgarden.py
 
 Working style:

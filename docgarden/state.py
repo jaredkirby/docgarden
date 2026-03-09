@@ -4,14 +4,14 @@ import hashlib
 import json
 import re
 from collections import defaultdict
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from datetime import datetime
 from json import JSONDecodeError
 from pathlib import Path
 from typing import Any
 
 from .markdown import parse_document
-from .scanner import discover_markdown_files, scan_repo
+from .scan.scanner import discover_markdown_files, scan_repo
 from .errors import StateError
 from .files import atomic_write_text
 from .models import (
@@ -33,6 +33,7 @@ from .models import (
     PlanState,
     RepoPaths,
     Scorecard,
+    FindingRecord,
     TRIAGE_LIFECYCLE_STAGES,
 )
 
@@ -60,10 +61,10 @@ def ensure_state_dirs(state_dir: Path) -> None:
         (state_dir / name).mkdir(parents=True, exist_ok=True)
 
 
-def load_findings_history(path: Path) -> list[dict[str, Any]]:
+def load_findings_history(path: Path) -> list[FindingRecord]:
     if not path.exists():
         return []
-    events = []
+    events: list[FindingRecord] = []
     for line_number, line in enumerate(path.read_text().splitlines(), start=1):
         if not line.strip():
             continue
@@ -79,41 +80,83 @@ def load_findings_history(path: Path) -> list[dict[str, Any]]:
                 f"Invalid findings history at {path}:{line_number}: "
                 "expected a JSON object."
             )
-        events.append(payload)
+        events.append(FindingRecord.from_dict(payload))
     return events
 
 
-def latest_events_by_id(events: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
-    latest: dict[str, dict[str, Any]] = {}
+def _coerce_finding_record(event: FindingRecord | dict[str, Any]) -> FindingRecord:
+    if isinstance(event, FindingRecord):
+        return event
+    return FindingRecord.from_dict(event)
+
+
+def latest_events_by_id(
+    events: list[FindingRecord] | list[dict[str, Any]],
+) -> dict[str, FindingRecord]:
+    latest: dict[str, FindingRecord] = {}
     for event in events:
-        latest[event["id"]] = event
+        record = _coerce_finding_record(event)
+        latest[record.id] = record
     return latest
 
 
-def _is_actionable_event(event: dict[str, Any]) -> bool:
-    return event.get("status") in ACTIONABLE_FINDING_STATUSES
+def _is_actionable_event(event: FindingRecord) -> bool:
+    return event.status in ACTIONABLE_FINDING_STATUSES
 
 
-def _is_score_relevant_event(event: dict[str, Any]) -> bool:
-    return event.get("status") in SCORE_RELEVANT_FINDING_STATUSES
+def _is_score_relevant_event(event: FindingRecord) -> bool:
+    return event.status in SCORE_RELEVANT_FINDING_STATUSES
 
 
-def _is_mechanical_event(event: dict[str, Any]) -> bool:
-    source = str(event.get("finding_source", "mechanical"))
-    return source == "mechanical"
+def _is_mechanical_event(event: FindingRecord) -> bool:
+    return event.finding_source == "mechanical"
 
 
-def _event_priority_key(event: dict[str, Any]) -> tuple[int, str, str]:
+def _event_priority_key(event: FindingRecord) -> tuple[int, str, str]:
     return (
-        {"high": 0, "medium": 1, "low": 2}.get(str(event.get("severity")), 3),
-        str(event.get("domain", "")),
-        str(event.get("id", "")),
+        _severity_rank(event.severity),
+        event.domain,
+        event.id,
     )
+
+
+def _severity_rank(severity: str) -> int:
+    return {"high": 0, "medium": 1, "low": 2}.get(severity, 3)
+
+
+def _finding_priority_key(finding: Finding) -> tuple[int, str, str]:
+    return (_severity_rank(finding.severity), finding.domain, finding.id)
+
+
+def _ordered_plan_ids(
+    active_findings: list[Finding],
+    *,
+    previous_plan: PlanState | None,
+) -> list[str]:
+    ordered = sorted(active_findings, key=_finding_priority_key)
+    if previous_plan is None:
+        return [finding.id for finding in ordered]
+
+    previous_positions = {
+        finding_id: index
+        for index, finding_id in enumerate(previous_plan.ordered_findings)
+    }
+    ordered = sorted(
+        ordered,
+        key=lambda finding: (
+            _severity_rank(finding.severity),
+            0 if finding.id in previous_positions else 1,
+            previous_positions.get(finding.id, 0),
+            finding.domain,
+            finding.id,
+        ),
+    )
+    return [finding.id for finding in ordered]
 
 
 def _ordered_actionable_ids(
     plan: PlanState | None,
-    latest: dict[str, dict[str, Any]],
+    latest: dict[str, FindingRecord],
     *,
     include_deferred: bool = False,
 ) -> list[str]:
@@ -145,7 +188,7 @@ def _ordered_actionable_ids(
         seen.add(finding_id)
 
     remainder = [
-        event["id"]
+        event.id
         for event in sorted(
             (
                 event
@@ -187,7 +230,7 @@ def _copy_plan_state(
 
 def _ensure_actionable_queue_finding(
     plan: PlanState,
-    latest: dict[str, dict[str, Any]],
+    latest: dict[str, FindingRecord],
     finding_id: str,
 ) -> None:
     prior = latest.get(finding_id)
@@ -201,42 +244,44 @@ def _ensure_actionable_queue_finding(
         raise StateError(f"Cannot resolve finding outside the current queue: {finding_id}.")
 
 
-def ordered_active_events(paths: RepoPaths) -> list[dict[str, Any]]:
+def ordered_active_events(paths: RepoPaths) -> list[FindingRecord]:
     latest = latest_events_by_id(load_findings_history(paths.findings))
     plan = load_plan(paths.plan) if paths.plan.exists() else None
     return [latest[finding_id] for finding_id in _ordered_actionable_ids(plan, latest)]
 
 
-def next_active_event(paths: RepoPaths) -> dict[str, Any] | None:
+def next_active_event(paths: RepoPaths) -> FindingRecord | None:
     ordered = ordered_active_events(paths)
     return ordered[0] if ordered else None
 
 
 def active_findings_from_latest_events(
-    latest: dict[str, dict[str, Any]]
+    latest: dict[str, FindingRecord] | dict[str, dict[str, Any]]
 ) -> list[Finding]:
+    records = [_coerce_finding_record(event) for event in latest.values()]
     active_events = sorted(
-        (event for event in latest.values() if _is_score_relevant_event(event)),
+        (event for event in records if _is_score_relevant_event(event)),
         key=_event_priority_key,
     )
-    return [Finding.from_dict(event) for event in active_events]
+    return [event.to_finding() for event in active_events]
 
 
 def actionable_findings_from_latest_events(
-    latest: dict[str, dict[str, Any]]
+    latest: dict[str, FindingRecord] | dict[str, dict[str, Any]]
 ) -> list[Finding]:
+    records = [_coerce_finding_record(event) for event in latest.values()]
     active_events = sorted(
-        (event for event in latest.values() if _is_actionable_event(event)),
+        (event for event in records if _is_actionable_event(event)),
         key=_event_priority_key,
     )
-    return [Finding.from_dict(event) for event in active_events]
+    return [event.to_finding() for event in active_events]
 
 
 def append_scan_events(
     findings_path: Path,
     active_findings: list[Finding],
     scan_time: datetime,
-) -> dict[str, dict[str, Any]]:
+) -> dict[str, FindingRecord]:
     events = load_findings_history(findings_path)
     latest = latest_events_by_id(events)
     active_by_id = {finding.id: finding for finding in active_findings}
@@ -244,36 +289,42 @@ def append_scan_events(
 
     scan_timestamp = scan_time.isoformat(timespec="seconds")
     for finding in active_findings:
-        prior = latest.get(finding.id, {})
-        payload = asdict(finding)
-        if prior.get("status") in REOPENED_ON_OBSERVATION_STATUSES:
-            payload["status"] = finding.status
+        prior = latest.get(finding.id)
+        payload = FindingRecord.from_finding(
+            finding,
+            event="observed",
+            event_at=scan_timestamp,
+        )
+        if prior is not None and prior.status in REOPENED_ON_OBSERVATION_STATUSES:
+            payload.status = finding.status
             for field in RESOLUTION_METADATA_FIELDS:
-                payload[field] = None
+                setattr(payload, field, None)
         else:
-            payload["status"] = prior.get("status", finding.status)
+            payload.status = prior.status if prior is not None else finding.status
             for field in RESOLUTION_METADATA_FIELDS:
-                if payload.get(field) is None and prior.get(field) is not None:
-                    payload[field] = prior[field]
-        payload["event"] = "observed"
-        payload["event_at"] = scan_timestamp
-        lines.append(json.dumps(payload, sort_keys=True))
+                if getattr(payload, field) is None and prior is not None:
+                    prior_value = getattr(prior, field)
+                    if prior_value is not None:
+                        setattr(payload, field, prior_value)
+        lines.append(json.dumps(payload.to_dict(), sort_keys=True))
         latest[finding.id] = payload
 
     for finding_id, prior in list(latest.items()):
-        if prior.get("status") not in AUTO_RESOLVED_FINDING_STATUSES:
+        if prior.status not in AUTO_RESOLVED_FINDING_STATUSES:
             continue
         if not _is_mechanical_event(prior):
             continue
         if finding_id not in active_by_id:
-            resolved = dict(prior)
-            resolved["status"] = "fixed"
-            resolved["event"] = "resolved"
-            resolved["event_at"] = scan_timestamp
-            resolved["resolved_at"] = scan_timestamp
+            resolved = replace(
+                prior,
+                status="fixed",
+                event="resolved",
+                event_at=scan_timestamp,
+                resolved_at=scan_timestamp,
+            )
             for field in ("attestation", "resolved_by", "resolution_note"):
-                resolved[field] = None
-            lines.append(json.dumps(resolved, sort_keys=True))
+                setattr(resolved, field, None)
+            lines.append(json.dumps(resolved.to_dict(), sort_keys=True))
             latest[finding_id] = resolved
 
     if lines:
@@ -291,7 +342,7 @@ def append_finding_status_event(
     attestation: str | None = None,
     resolved_by: str | None = None,
     resolution_note: str | None = None,
-) -> dict[str, Any]:
+) -> FindingRecord:
     if status not in FINDING_STATUSES:
         raise StateError(f"Unsupported finding status: {status}.")
     if (
@@ -305,19 +356,22 @@ def append_finding_status_event(
     if prior is None:
         raise StateError(f"Cannot update unknown finding: {finding_id}.")
 
-    payload = dict(prior)
-    payload["status"] = status
-    payload["event"] = "status_changed"
-    payload["event_at"] = event_at.isoformat(timespec="seconds")
-    payload["attestation"] = attestation
-    payload["resolved_by"] = resolved_by
-    payload["resolution_note"] = resolution_note
-    payload["resolved_at"] = (
-        payload["event_at"] if status in RESOLVED_FINDING_STATUSES else None
+    event_timestamp = event_at.isoformat(timespec="seconds")
+    payload = replace(
+        prior,
+        status=status,
+        event="status_changed",
+        event_at=event_timestamp,
+        attestation=attestation,
+        resolved_by=resolved_by,
+        resolution_note=resolution_note,
+        resolved_at=(
+            event_timestamp if status in RESOLVED_FINDING_STATUSES else None
+        ),
     )
 
     with findings_path.open("a", encoding="utf-8") as handle:
-        handle.write(json.dumps(payload, sort_keys=True) + "\n")
+        handle.write(json.dumps(payload.to_dict(), sort_keys=True) + "\n")
     return payload
 
 
@@ -786,10 +840,12 @@ def _append_imported_review_findings(
         existing = latest.get(finding.id)
         if existing is not None:
             raise StateError(f"Review finding already exists: {finding.id}.")
-        payload = asdict(finding)
-        payload["event"] = "review_imported"
-        payload["event_at"] = timestamp
-        lines.append(json.dumps(payload, sort_keys=True))
+        payload = FindingRecord.from_finding(
+            finding,
+            event="review_imported",
+            event_at=timestamp,
+        )
+        lines.append(json.dumps(payload.to_dict(), sort_keys=True))
     if lines:
         with findings_path.open("a", encoding="utf-8") as handle:
             handle.write("\n".join(lines) + "\n")
@@ -932,6 +988,7 @@ def build_plan(
     previous_plan: PlanState | None = None,
 ) -> PlanState:
     active_ids = {finding.id for finding in active_findings}
+    active_by_id = {finding.id: finding for finding in active_findings}
     clusters: dict[str, list[str]] = defaultdict(list)
     for finding in active_findings:
         clusters[finding.cluster].append(finding.id)
@@ -942,26 +999,7 @@ def build_plan(
                     continue
                 clusters[cluster_name].append(issue_id)
 
-    ordered = sorted(
-        active_findings,
-        key=lambda item: (
-            {"high": 0, "medium": 1, "low": 2}.get(item.severity, 3),
-            item.domain,
-            item.id,
-        ),
-    )
-    ordered_ids = [finding.id for finding in ordered]
-    if previous_plan is not None:
-        preserved_order = [
-            finding_id
-            for finding_id in previous_plan.ordered_findings
-            if finding_id in active_ids
-        ]
-        ordered_ids = preserved_order + [
-            finding_id
-            for finding_id in ordered_ids
-            if finding_id not in preserved_order
-        ]
+    ordered_ids = _ordered_plan_ids(active_findings, previous_plan=previous_plan)
     deferred_items = (
         [
             finding_id
@@ -980,6 +1018,9 @@ def build_plan(
         previous_plan is not None
         and previous_plan.current_focus in active_ids
         and previous_plan.current_focus not in deferred_items
+        and next_focus is not None
+        and _severity_rank(active_by_id[previous_plan.current_focus].severity)
+        <= _severity_rank(active_by_id[next_focus].severity)
     ):
         current_focus = previous_plan.current_focus
     lifecycle_stage = "complete"
@@ -1071,7 +1112,7 @@ def record_plan_resolution(
     attestation: str | None = None,
     resolved_by: str | None = None,
     resolution_note: str | None = None,
-) -> tuple[dict[str, Any], PlanState]:
+) -> tuple[FindingRecord, PlanState]:
     if status not in PLAN_RESOLVE_FINDING_STATUSES:
         raise StateError(f"Unsupported plan resolve result: {status}.")
 
@@ -1133,14 +1174,14 @@ def reopen_plan_finding(
     event_at: datetime,
     resolved_by: str | None = None,
     resolution_note: str | None = None,
-) -> tuple[dict[str, Any], PlanState]:
+) -> tuple[FindingRecord, PlanState]:
     latest = latest_events_by_id(load_findings_history(findings_path))
     prior = latest.get(finding_id)
     if prior is None:
         raise StateError(f"Cannot update unknown finding: {finding_id}.")
-    if prior.get("status") not in REOPENABLE_FINDING_STATUSES:
+    if prior.status not in REOPENABLE_FINDING_STATUSES:
         raise StateError(
-            f"Cannot reopen finding with status {prior.get('status')}: {finding_id}."
+            f"Cannot reopen finding with status {prior.status}: {finding_id}."
         )
 
     event = append_finding_status_event(

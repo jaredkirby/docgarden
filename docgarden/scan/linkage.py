@@ -4,13 +4,14 @@ from collections import Counter, defaultdict
 from pathlib import Path
 import re
 
-from .markdown import Document, ROUTE_RE, resolve_link_target
-from .models import Finding, FindingContext
-from .scan_alignment import (
+from ..markdown import Document, ROUTE_RE, resolve_link_target
+from ..models import Finding
+from .findings import FindingSpec, build_document_finding, build_finding
+from .alignment import (
     format_reference_for_source,
     stable_suffix,
 )
-from .scan_document_rules import document_domain
+from .document_rules import document_domain
 
 
 def is_docs_rel_path(rel_path: str) -> bool:
@@ -95,22 +96,20 @@ def duplicate_doc_id_findings(
         for document in documents:
             if document.frontmatter.get("doc_id") != doc_id:
                 continue
-            context = FindingContext(
-                rel_path=document.rel_path,
-                domain=document_domain(document),
-                discovered_at=discovered_at,
-            )
             findings.append(
-                Finding.open_issue(
-                    context,
-                    kind="duplicate-doc-id",
-                    severity="high",
-                    summary=f"{document.rel_path} uses duplicate doc_id `{doc_id}`.",
-                    evidence=[f"doc_id `{doc_id}` appears {count} times."],
-                    recommended_action="Give each doc a unique doc_id.",
-                    safe_to_autofix=False,
-                    cluster="metadata-gaps",
-                    suffix="duplicate-id",
+                build_document_finding(
+                    document,
+                    FindingSpec(
+                        kind="duplicate-doc-id",
+                        severity="high",
+                        summary=f"{document.rel_path} uses duplicate doc_id `{doc_id}`.",
+                        evidence=[f"doc_id `{doc_id}` appears {count} times."],
+                        recommended_action="Give each doc a unique doc_id.",
+                        cluster="metadata-gaps",
+                        suffix="duplicate-id",
+                    ),
+                    domain=document_domain(document),
+                    discovered_at=discovered_at,
                 )
             )
     return findings
@@ -157,27 +156,26 @@ def broken_route_findings(
             recommended_action = (
                 f"Update the route to point at {replacement_target} instead."
             )
-        context = FindingContext(
-            rel_path=source,
-            domain="docs",
-            discovered_at=discovered_at,
-        )
         findings.append(
-            Finding.open_issue(
-                context,
-                kind="broken-route",
-                severity="high" if source == "AGENTS.md" else "medium",
-                summary=f"{source} routes to a missing file.",
-                evidence=evidence,
-                recommended_action=recommended_action,
-                safe_to_autofix=bool(route_replacements),
-                cluster="routing-drift",
-                suffix=f"route-{abs(hash(target))}",
-                details={
-                    "original_target": target,
-                    "replacement_target": replacement_target,
-                    "route_replacements": route_replacements,
-                },
+            build_finding(
+                FindingSpec(
+                    kind="broken-route",
+                    severity="high" if source == "AGENTS.md" else "medium",
+                    summary=f"{source} routes to a missing file.",
+                    evidence=evidence,
+                    recommended_action=recommended_action,
+                    safe_to_autofix=bool(route_replacements),
+                    cluster="routing-drift",
+                    suffix=f"route-{abs(hash(target))}",
+                    details={
+                        "original_target": target,
+                        "replacement_target": replacement_target,
+                        "route_replacements": route_replacements,
+                    },
+                ),
+                rel_path=source,
+                domain="docs",
+                discovered_at=discovered_at,
             )
         )
     return findings
@@ -318,32 +316,33 @@ def route_quality_findings(
                 if len(replacements) == 1
                 else []
             )
-            context = FindingContext(
-                rel_path=source,
-                domain="docs",
-                discovered_at=discovered_at,
-            )
             findings.append(
-                Finding.open_issue(
-                    context,
-                    kind="stale-route",
-                    severity="high" if source == "AGENTS.md" else "medium",
-                    summary=(
-                        f"{source} routes current readers to {issue_label} doc: "
-                        f"{target_document.rel_path}."
+                build_finding(
+                    FindingSpec(
+                        kind="stale-route",
+                        severity="high" if source == "AGENTS.md" else "medium",
+                        summary=(
+                            f"{source} routes current readers to {issue_label} doc: "
+                            f"{target_document.rel_path}."
+                        ),
+                        evidence=evidence,
+                        recommended_action=recommended_action,
+                        safe_to_autofix=bool(route_replacements),
+                        cluster="routing-drift",
+                        suffix=stable_suffix(
+                            "route-quality", f"{source}->{target_document.rel_path}"
+                        ),
+                        details={
+                            "original_target": target_document.rel_path,
+                            "replacement_target": (
+                                replacements[0] if len(replacements) == 1 else None
+                            ),
+                            "route_replacements": route_replacements,
+                        },
                     ),
-                    evidence=evidence,
-                    recommended_action=recommended_action,
-                    safe_to_autofix=bool(route_replacements),
-                    cluster="routing-drift",
-                    suffix=stable_suffix(
-                        "route-quality", f"{source}->{target_document.rel_path}"
-                    ),
-                    details={
-                        "original_target": target_document.rel_path,
-                        "replacement_target": replacements[0] if len(replacements) == 1 else None,
-                        "route_replacements": route_replacements,
-                    },
+                    rel_path=source,
+                    domain="docs",
+                    discovered_at=discovered_at,
                 )
             )
 
@@ -364,23 +363,21 @@ def orphan_doc_findings(
             continue
         if document.rel_path in inbound_links:
             continue
-        context = FindingContext(
-            rel_path=document.rel_path,
-            domain=document_domain(document),
-            discovered_at=discovered_at,
-            confidence="medium",
-        )
         findings.append(
-            Finding.open_issue(
-                context,
-                kind="orphan-doc",
-                severity="low",
-                summary=f"{document.rel_path} is not linked from any scanned document.",
-                evidence=["No inbound markdown links were found in scanned docs."],
-                recommended_action="Link the doc from an index, canonical doc, or AGENTS route.",
-                safe_to_autofix=False,
-                cluster="routing-drift",
-                suffix="orphan",
+            build_document_finding(
+                document,
+                FindingSpec(
+                    kind="orphan-doc",
+                    severity="low",
+                    summary=f"{document.rel_path} is not linked from any scanned document.",
+                    evidence=["No inbound markdown links were found in scanned docs."],
+                    recommended_action="Link the doc from an index, canonical doc, or AGENTS route.",
+                    cluster="routing-drift",
+                    suffix="orphan",
+                ),
+                domain=document_domain(document),
+                discovered_at=discovered_at,
+                confidence="medium",
             )
         )
     return findings

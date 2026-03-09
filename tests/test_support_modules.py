@@ -4,19 +4,24 @@ from dataclasses import asdict
 import json
 from datetime import datetime
 from pathlib import Path
+from types import SimpleNamespace
 
-from docgarden.errors import ConfigError, DocgardenError, StateError
+from docgarden.errors import ConfigError, DocgardenError, MarkdownError, StateError
+from docgarden.automation import build_ci_check_payload
+from docgarden.config import Config
 from docgarden.files import atomic_write_text
 from docgarden.markdown import parse_document, replace_frontmatter, resolve_link_target
 from docgarden.models import (
     Finding,
     FindingContext,
+    FindingRecord,
     PlanState,
     RepoPaths,
     Scorecard,
 )
+from docgarden.pr_drafts import collect_changed_files
 from docgarden.quality import build_scorecard, write_quality_score
-from docgarden.scan_alignment import (
+from docgarden.scan.alignment import (
     extract_validation_commands,
     infer_promotion_destination_docs,
     infer_supporting_promotion_destination_docs,
@@ -26,8 +31,9 @@ from docgarden.scan_alignment import (
     resolve_repo_artifact,
     stable_suffix,
 )
-from docgarden.scan_document_rules import missing_frontmatter_finding
-from docgarden.scan_linkage import collect_domain_doc_counts, repo_relative_path
+from docgarden.scan.document_rules import missing_frontmatter_finding
+from docgarden.scan.findings import FindingSpec, build_document_finding
+from docgarden.scan.linkage import collect_domain_doc_counts, repo_relative_path
 from docgarden.state import (
     active_findings_from_latest_events,
     append_finding_status_event,
@@ -113,6 +119,28 @@ See [Plan](exec-plans/active/plan.md) and docs/reference.md.
     )
 
 
+def test_parse_document_wraps_invalid_frontmatter_in_markdown_error(tmp_path) -> None:
+    repo = tmp_path
+    doc_path = repo / "docs" / "bad.md"
+    write(
+        doc_path,
+        """---
+doc_id: [unterminated
+---
+
+# Broken Doc
+""",
+    )
+
+    try:
+        parse_document(doc_path, repo)
+    except MarkdownError as exc:
+        assert "Invalid frontmatter" in str(exc)
+        assert str(doc_path) in str(exc)
+    else:
+        raise AssertionError("parse_document should wrap invalid frontmatter in MarkdownError")
+
+
 def test_atomic_write_text_replaces_existing_file(tmp_path) -> None:
     target = tmp_path / "state" / "note.txt"
 
@@ -146,6 +174,178 @@ def test_scan_rule_helpers_cover_new_modules(tmp_path) -> None:
     assert finding.kind == "missing-frontmatter"
     assert repo_relative_path(repo, doc_path) == "docs/index.md"
     assert collect_domain_doc_counts([document]) == {}
+
+
+def test_scan_finding_builders_copy_inputs_and_default_document_files(tmp_path) -> None:
+    repo = tmp_path
+    doc_path = repo / "docs" / "index.md"
+    write(
+        doc_path,
+        """---
+doc_id: docs-index
+doc_type: canonical
+domain: docs
+owner: kirby
+status: verified
+last_reviewed: 2026-03-08
+review_cycle_days: 30
+---
+
+# Docs Index
+""",
+    )
+    document = parse_document(doc_path, repo)
+    evidence = ["Missing headings: Scope"]
+    details = {"missing_sections": ["Scope"]}
+    files = ["docs/index.md", "docs/reference.md"]
+    spec = FindingSpec(
+        kind="missing-sections",
+        severity="medium",
+        summary="Missing headings.",
+        evidence=evidence,
+        recommended_action="Add the missing section.",
+        cluster="structure-gaps",
+        suffix="scope",
+        safe_to_autofix=True,
+        details=details,
+    )
+
+    finding = build_document_finding(
+        document,
+        spec,
+        discovered_at="2026-03-08T12:00:00",
+        domain="docs",
+        files=files,
+    )
+    default_files_finding = build_document_finding(
+        document,
+        spec,
+        discovered_at="2026-03-08T12:00:00",
+        domain="docs",
+    )
+
+    evidence.append("Mutated later")
+    details["missing_sections"].append("Validation")
+    files.append("docs/extra.md")
+
+    assert finding.files == ["docs/index.md", "docs/reference.md"]
+    assert finding.evidence == ["Missing headings: Scope"]
+    assert finding.details == {"missing_sections": ["Scope"]}
+    assert default_files_finding.files == ["docs/index.md"]
+
+
+def test_build_ci_check_payload_runs_scan_and_reports_blocking_rules(tmp_path, monkeypatch) -> None:
+    repo = tmp_path
+    doc_path = repo / "docs" / "canon.md"
+    write(
+        doc_path,
+        """---
+doc_id: docs-canon
+doc_type: canonical
+domain: docs
+owner: kirby
+status: verified
+last_reviewed: 2026-01-01
+review_cycle_days: 30
+---
+
+# Canon Doc
+""",
+    )
+    paths = SimpleNamespace(
+        repo_root=repo,
+        config=repo / ".docgarden" / "config.yaml",
+        findings=repo / ".docgarden" / "findings.jsonl",
+        score=repo / ".docgarden" / "score.json",
+    )
+    finding = Finding.open_issue(
+        FindingContext(
+            rel_path="docs/canon.md",
+            domain="docs",
+            discovered_at="2026-03-08T12:00:00",
+        ),
+        kind="stale-review",
+        severity="high",
+        summary="Review date is stale.",
+        evidence=["last_reviewed is older than the review cycle."],
+        recommended_action="Refresh the doc review.",
+        safe_to_autofix=False,
+        cluster="freshness",
+        suffix="canon",
+    )
+    recorded_scans: list[Path] = []
+
+    monkeypatch.setattr(
+        "docgarden.automation.run_scan",
+        lambda incoming_paths: recorded_scans.append(incoming_paths.repo_root),
+    )
+    monkeypatch.setattr(
+        "docgarden.automation.Config.load",
+        lambda path: Config(
+            strict_score_fail_threshold=70,
+            block_on=["stale_verified_canonical_docs", "unknown_rule"],
+        ),
+    )
+    monkeypatch.setattr(
+        "docgarden.automation.load_score",
+        lambda path: SimpleNamespace(strict_score=65),
+    )
+    monkeypatch.setattr(
+        "docgarden.automation.load_findings_history",
+        lambda path: [FindingRecord.from_finding(finding, event="observed")],
+    )
+
+    payload = build_ci_check_payload(paths)
+
+    assert recorded_scans == [repo]
+    assert payload["passed"] is False
+    assert payload["strict_score"] == 65
+    assert payload["strict_score_fail_threshold"] == 70
+    assert [failure["type"] for failure in payload["failures"]] == [
+        "strict_score_fail_threshold",
+        "blocking_rule",
+        "unknown_blocking_rule",
+    ]
+    assert payload["failures"][1]["rule"] == "stale_verified_canonical_docs"
+    assert payload["failures"][1]["finding_count"] == 1
+    assert payload["failures"][1]["findings"][0]["id"] == finding.id
+    assert payload["failures"][2]["rule"] == "unknown_rule"
+
+
+def test_collect_changed_files_filters_transient_git_paths(monkeypatch, tmp_path) -> None:
+    responses = {
+        ("diff", "--name-only", "--diff-filter=ACMR", "--relative"): [
+            "docs/index.md",
+            ".docgarden/findings.jsonl",
+            "docs/index.md",
+            ".docgarden/runs/loop.json",
+        ],
+        ("diff", "--cached", "--name-only", "--diff-filter=ACMR", "--relative"): [
+            "README.md",
+        ],
+        ("ls-files", "--others", "--exclude-standard"): [
+            ".docgarden/cache/tmp.json",
+            "scripts/new.sh",
+        ],
+        ("diff", "--name-only", "--diff-filter=D", "--relative"): [
+            "docs/old.md",
+            ".docgarden/reviews/import.json",
+        ],
+        ("diff", "--cached", "--name-only", "--diff-filter=D", "--relative"): [
+            "docs/old.md",
+            ".docgarden/locks/run.lock",
+        ],
+    }
+    monkeypatch.setattr(
+        "docgarden.pr_drafts._run_git_path_query",
+        lambda repo_root, args: list(responses[tuple(args)]),
+    )
+
+    changed_files, deleted_files, notes = collect_changed_files(tmp_path)
+
+    assert changed_files == ["docs/index.md", "README.md", "scripts/new.sh"]
+    assert deleted_files == ["docs/old.md"]
+    assert notes == []
 
 
 def test_alignment_helpers_handle_repo_artifacts_and_commands(tmp_path) -> None:
@@ -324,10 +524,10 @@ def test_state_helpers_persist_findings_and_plan(tmp_path) -> None:
     scan_time = datetime(2026, 3, 8, 12, 0, 0)
 
     latest = append_scan_events(findings_path, [finding], scan_time)
-    assert latest[finding.id]["event"] == "observed"
+    assert latest[finding.id].event == "observed"
 
     history = load_findings_history(findings_path)
-    assert latest_events_by_id(history)[finding.id]["summary"] == "Missing headings."
+    assert latest_events_by_id(history)[finding.id].summary == "Missing headings."
 
     plan = build_plan([finding], "abc123", scan_time)
     assert plan.current_focus == finding.id
@@ -493,6 +693,55 @@ def test_build_plan_preserves_notes_and_restarts_complete_cycle_on_new_findings(
     assert plan.strategy_text == "Resume with the highest-signal doc cluster."
 
 
+def test_build_plan_does_not_preserve_lower_priority_focus_over_new_high_severity_issue() -> None:
+    context = FindingContext(
+        rel_path="docs/index.md",
+        domain="docs",
+        discovered_at="2026-03-08T12:00:00",
+    )
+    medium = Finding.open_issue(
+        context,
+        kind="missing-sections",
+        severity="medium",
+        summary="Missing headings.",
+        evidence=["Missing headings: Scope"],
+        recommended_action="Add the missing section.",
+        safe_to_autofix=True,
+        cluster="structure-gaps",
+        suffix="medium",
+    )
+    previous_plan = build_plan(
+        [medium],
+        "oldhash",
+        datetime(2026, 3, 8, 12, 5, 0),
+    )
+    previous_plan.current_focus = medium.id
+    previous_plan.ordered_findings = [medium.id]
+
+    urgent = Finding.open_issue(
+        context,
+        kind="stale-review",
+        severity="high",
+        summary="Review date is stale.",
+        evidence=["last_reviewed is older than the review cycle."],
+        recommended_action="Refresh the review date.",
+        safe_to_autofix=False,
+        cluster="freshness",
+        suffix="urgent",
+    )
+
+    plan = build_plan(
+        [medium, urgent],
+        "newhash",
+        datetime(2026, 3, 9, 10, 0, 0),
+        previous_plan=previous_plan,
+    )
+
+    assert plan.ordered_findings[:2] == [urgent.id, medium.id]
+    assert plan.current_focus == urgent.id
+    assert plan.stage_notes == previous_plan.stage_notes
+
+
 def test_set_plan_focus_updates_current_focus_for_id_and_cluster(tmp_path) -> None:
     state_dir = tmp_path / ".docgarden"
     ensure_state_dirs(state_dir)
@@ -648,7 +897,7 @@ def test_record_plan_resolution_appends_event_and_advances_focus(tmp_path) -> No
     after_lines = findings_path.read_text().splitlines()
     assert len(after_lines) == len(before_lines) + 1
     assert json.loads(after_lines[-1])["status"] == "fixed"
-    assert event["event"] == "status_changed"
+    assert event.event == "status_changed"
     assert updated_plan.current_focus == beta.id
 
 
@@ -793,10 +1042,10 @@ def test_reopen_plan_finding_reopens_resolved_event_and_refocuses(tmp_path) -> N
         resolved_by="kirby",
     )
 
-    assert event["status"] == "open"
-    assert event["resolved_at"] is None
+    assert event.status == "open"
+    assert event.resolved_at is None
     assert updated_plan.current_focus == finding.id
-    assert latest_events_by_id(load_findings_history(findings_path))[finding.id]["status"] == "open"
+    assert latest_events_by_id(load_findings_history(findings_path))[finding.id].status == "open"
 
 
 def test_state_helpers_preserve_manual_status_metadata_across_scans(tmp_path) -> None:
@@ -942,9 +1191,9 @@ def test_scan_auto_resolves_accepted_debt_when_detector_stops_reporting_it(
 
     latest = append_scan_events(findings_path, [], datetime(2026, 3, 8, 14, 0, 0))
 
-    assert latest[finding.id]["status"] == "fixed"
-    assert latest[finding.id]["event"] == "resolved"
-    assert latest[finding.id]["resolved_at"] == "2026-03-08T14:00:00"
+    assert latest[finding.id].status == "fixed"
+    assert latest[finding.id].event == "resolved"
+    assert latest[finding.id].resolved_at == "2026-03-08T14:00:00"
 
 
 def test_append_finding_status_event_supports_additional_statuses(tmp_path) -> None:
@@ -991,9 +1240,9 @@ def test_append_finding_status_event_supports_additional_statuses(tmp_path) -> N
         attestation="Scanner reproduced locally and confirmed this is a false alarm.",
     )
 
-    assert in_progress["resolved_at"] is None
-    assert needs_human["resolved_at"] is None
-    assert false_positive["resolved_at"] == "2026-03-08T12:45:00"
+    assert in_progress.resolved_at is None
+    assert needs_human.resolved_at is None
+    assert false_positive.resolved_at == "2026-03-08T12:45:00"
 
 
 def test_append_finding_status_event_requires_attestation_for_non_trivial_states(
@@ -1063,12 +1312,12 @@ def test_reobserved_fixed_finding_reopens_with_clean_resolution_metadata(
     append_scan_events(findings_path, [], datetime(2026, 3, 8, 13, 0, 0))
     latest = append_scan_events(findings_path, [finding], datetime(2026, 3, 8, 14, 0, 0))
 
-    assert latest[finding.id]["status"] == "open"
-    assert latest[finding.id]["event"] == "observed"
-    assert latest[finding.id]["resolved_at"] is None
-    assert latest[finding.id]["attestation"] is None
-    assert latest[finding.id]["resolved_by"] is None
-    assert latest[finding.id]["resolution_note"] is None
+    assert latest[finding.id].status == "open"
+    assert latest[finding.id].event == "observed"
+    assert latest[finding.id].resolved_at is None
+    assert latest[finding.id].attestation is None
+    assert latest[finding.id].resolved_by is None
+    assert latest[finding.id].resolution_note is None
 
 
 def test_reobserved_false_positive_finding_reopens(tmp_path) -> None:
@@ -1104,9 +1353,9 @@ def test_reobserved_false_positive_finding_reopens(tmp_path) -> None:
     )
     latest = append_scan_events(findings_path, [finding], datetime(2026, 3, 8, 14, 0, 0))
 
-    assert latest[finding.id]["status"] == "open"
-    assert latest[finding.id]["resolved_at"] is None
-    assert latest[finding.id]["attestation"] is None
+    assert latest[finding.id].status == "open"
+    assert latest[finding.id].resolved_at is None
+    assert latest[finding.id].attestation is None
 
 
 def test_prepare_review_packet_is_reproducible_and_scope_filtered(tmp_path) -> None:
@@ -1226,7 +1475,7 @@ def test_import_review_persists_subjective_findings_and_updates_plan(tmp_path) -
     ensure_state_dirs(state_dir)
     write(
         state_dir / "config.yaml",
-        "repo_name: test-docgarden\nstrict_score_fail_threshold: 70\n",
+        "strict_score_fail_threshold: 70\n",
     )
     write(repo / "AGENTS.md", "# AGENTS.md\n\n- Overview: docs/index.md\n")
     write(
@@ -1314,14 +1563,14 @@ Text.
     assert stored_payload["review_id"] == "docs-clarity-pass"
     assert len(imported_findings) == 1
     assert imported_findings[0].finding_source == "subjective_review"
-    assert latest[imported_findings[0].id]["event"] == "review_imported"
-    assert latest[imported_findings[0].id]["provenance"]["packet_id"] == packet_payload["packet_id"]
+    assert latest[imported_findings[0].id].event == "review_imported"
+    assert latest[imported_findings[0].id].provenance["packet_id"] == packet_payload["packet_id"]
     assert plan.current_focus == imported_findings[0].id
-    assert ordered_active_events(paths)[0]["id"] == imported_findings[0].id
+    assert ordered_active_events(paths)[0].id == imported_findings[0].id
 
     append_scan_events(paths.findings, [], datetime(2026, 3, 9, 11, 0, 0))
     latest_after_scan = latest_events_by_id(load_findings_history(paths.findings))
-    assert latest_after_scan[imported_findings[0].id]["status"] == "open"
+    assert latest_after_scan[imported_findings[0].id].status == "open"
 
 
 def test_import_review_fails_closed_when_file_is_outside_packet(tmp_path) -> None:
@@ -1330,7 +1579,7 @@ def test_import_review_fails_closed_when_file_is_outside_packet(tmp_path) -> Non
     ensure_state_dirs(state_dir)
     write(
         state_dir / "config.yaml",
-        "repo_name: test-docgarden\nstrict_score_fail_threshold: 70\n",
+        "strict_score_fail_threshold: 70\n",
     )
     write(repo / "AGENTS.md", "# AGENTS.md\n\n- Overview: docs/index.md\n")
     write(
@@ -1418,7 +1667,7 @@ def test_import_review_accepts_zero_finding_payload_and_persists_review(tmp_path
     ensure_state_dirs(state_dir)
     write(
         state_dir / "config.yaml",
-        "repo_name: test-docgarden\nstrict_score_fail_threshold: 70\n",
+        "strict_score_fail_threshold: 70\n",
     )
     write(repo / "AGENTS.md", "# AGENTS.md\n\n- Overview: docs/index.md\n")
     write(
@@ -1593,8 +1842,13 @@ def test_load_score_supports_legacy_payload_without_rollup(tmp_path) -> None:
     scorecard = load_score(score_path)
 
     assert scorecard is not None
-    assert scorecard.rollup == {}
-    assert scorecard.trend == {"points": []}
+    assert scorecard.rollup.to_dict() == {
+        "weighted_score": None,
+        "raw_average_score": None,
+        "weights": {},
+        "critical_regressions": [],
+    }
+    assert scorecard.trend.to_dict() == {"points": []}
 
 
 def test_build_scorecard_uses_domain_weights_and_tracks_critical_regressions() -> None:
@@ -1668,16 +1922,17 @@ def test_build_scorecard_uses_domain_weights_and_tracks_critical_regressions() -
         domain_weights={"design-docs": 2, "docs": 4, "exec-plans": 3},
     )
 
-    assert scorecard.rollup["weighted_score"] == 96
-    assert scorecard.rollup["raw_average_score"] == 97
-    assert scorecard.rollup["weights"] == {
+    assert scorecard.rollup.weighted_score == 96
+    assert scorecard.rollup.raw_average_score == 97
+    assert scorecard.rollup.weights == {
         "design-docs": 2,
         "docs": 4,
         "exec-plans": 3,
     }
-    assert scorecard.rollup["critical_regressions"] == [
+    assert [item.to_dict() for item in scorecard.rollup.critical_regressions] == [
         {"domain": "docs", "score": 92, "previous_score": 96, "delta": -4}
     ]
-    assert scorecard.trend["summary"]["weighted_rollup_delta"] == -2
-    assert len(scorecard.trend["points"]) == 2
-    assert scorecard.trend["points"][-1]["critical_regressions"] == ["docs"]
+    assert scorecard.trend.summary is not None
+    assert scorecard.trend.summary.weighted_rollup_delta == -2
+    assert len(scorecard.trend.points) == 2
+    assert scorecard.trend.points[-1].critical_regressions == ["docs"]

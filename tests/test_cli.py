@@ -8,9 +8,11 @@ from pathlib import Path
 
 from docgarden.cli import build_parser, main
 from docgarden.cli_commands import repo_paths
-from docgarden.scan_workflow import run_scan
+from docgarden.errors import DocgardenError
+from docgarden.scan.workflow import run_scan
 from docgarden.state import (
     append_finding_status_event,
+    latest_events_by_id,
     load_findings_history,
     load_plan,
     load_score,
@@ -41,7 +43,7 @@ def write(path: Path, content: str) -> None:
 def make_repo(tmp_path: Path) -> Path:
     write(
         tmp_path / ".docgarden" / "config.yaml",
-        "repo_name: test-docgarden\nstrict_score_fail_threshold: 70\n",
+        "strict_score_fail_threshold: 70\n",
     )
     write(
         tmp_path / "AGENTS.md",
@@ -203,8 +205,7 @@ def test_cli_ci_check_reports_threshold_and_blocking_rules(
     repo = make_repo(tmp_path)
     write(
         repo / ".docgarden" / "config.yaml",
-        """repo_name: test-docgarden
-strict_score_fail_threshold: 95
+        """strict_score_fail_threshold: 95
 block_on:
   - broken_agents_routes
   - missing_frontmatter_on_canonical
@@ -322,8 +323,8 @@ def test_cli_review_prepare_and_import_commands(tmp_path, monkeypatch, capsys) -
     assert len(import_output["finding_ids"]) == 1
     assert Path(import_output["stored_review"]).exists()
     latest = load_findings_history(repo_paths(repo).findings)
-    assert latest[-1]["finding_source"] == "subjective_review"
-    assert latest[-1]["event"] == "review_imported"
+    assert latest[-1].finding_source == "subjective_review"
+    assert latest[-1].event == "review_imported"
 
 
 def test_cli_review_import_accepts_zero_finding_review(tmp_path, monkeypatch, capsys) -> None:
@@ -418,8 +419,7 @@ def test_cli_scan_persists_score_trends_and_weighted_rollups(
     repo = make_repo(tmp_path)
     write(
         repo / ".docgarden" / "config.yaml",
-        """repo_name: test-docgarden
-strict_score_fail_threshold: 70
+        """strict_score_fail_threshold: 70
 critical_domains:
   - docs
 domain_weights:
@@ -433,8 +433,8 @@ domain_weights:
 
     first_score = load_score(repo_paths(repo).score)
     assert first_score is not None
-    assert first_score.rollup["weighted_score"] == 100
-    assert len(first_score.trend["points"]) == 1
+    assert first_score.rollup.weighted_score == 100
+    assert len(first_score.trend.points) == 1
 
     write(
         repo / "docs" / "index.md",
@@ -453,13 +453,14 @@ Text.
 
     assert scan_output["overall_score"] == 99
     assert updated_score is not None
-    assert updated_score.rollup["weighted_score"] == 92
-    assert updated_score.rollup["weights"] == {"docs": 4}
-    assert updated_score.rollup["critical_regressions"] == [
+    assert updated_score.rollup.weighted_score == 92
+    assert updated_score.rollup.weights == {"docs": 4}
+    assert [item.to_dict() for item in updated_score.rollup.critical_regressions] == [
         {"domain": "docs", "score": 92, "previous_score": 100, "delta": -8}
     ]
-    assert updated_score.trend["summary"]["weighted_rollup_delta"] == -8
-    assert len(updated_score.trend["points"]) == 2
+    assert updated_score.trend.summary is not None
+    assert updated_score.trend.summary.weighted_rollup_delta == -8
+    assert len(updated_score.trend.points) == 2
 
 
 def test_cli_next_show_and_fix_safe_commands(tmp_path, monkeypatch, capsys) -> None:
@@ -584,6 +585,26 @@ Text.
     assert ".docgarden/score.json" not in payload["body"]
 
 
+def test_cli_pr_draft_fails_when_git_state_cannot_be_derived(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    repo = make_repo(tmp_path)
+    monkeypatch.chdir(repo)
+
+    def fail_git_query(_repo_root, _args):
+        raise DocgardenError(
+            "Unable to derive changed files from git state. Git said: simulated failure"
+        )
+
+    monkeypatch.setattr("docgarden.pr_drafts._run_git_path_query", fail_git_query)
+
+    assert main(["pr", "draft"]) == 1
+    error_output = capsys.readouterr().err
+
+    assert "Unable to derive changed files from git state." in error_output
+    assert "simulated failure" in error_output
+
+
 def test_cli_pr_draft_can_focus_unsafe_findings_as_issue(
     tmp_path, monkeypatch, capsys
 ) -> None:
@@ -679,11 +700,11 @@ Text.
     stale_finding = next(
         event
         for event in load_findings_history(paths.findings)
-        if event["kind"] == "stale-review"
+        if event.kind == "stale-review"
     )
     append_finding_status_event(
         paths.findings,
-        stale_finding["id"],
+        stale_finding.id,
         status="accepted_debt",
         event_at=datetime(2026, 3, 8, 13, 0, 0),
         attestation="Known stale doc accepted until manual review lands.",
@@ -693,7 +714,7 @@ Text.
     assert main(["pr", "draft"]) == 0
     payload = json.loads(capsys.readouterr().out)
 
-    assert stale_finding["id"] not in payload["finding_ids"]
+    assert stale_finding.id not in payload["finding_ids"]
     assert all(
         finding["status"] in {"open", "in_progress", "needs_human"}
         for finding in payload["findings"]
@@ -754,8 +775,7 @@ def test_cli_pr_draft_publish_rejects_empty_pr_scope(
     repo = make_repo(tmp_path)
     write(
         repo / ".docgarden" / "config.yaml",
-        """repo_name: test-docgarden
-strict_score_fail_threshold: 70
+        """strict_score_fail_threshold: 70
 pr_drafts:
   enabled: true
   provider: github
@@ -791,8 +811,7 @@ def test_cli_pr_draft_publish_reports_remote_result(
     repo = make_repo(tmp_path)
     write(
         repo / ".docgarden" / "config.yaml",
-        """repo_name: test-docgarden
-strict_score_fail_threshold: 70
+        """strict_score_fail_threshold: 70
 pr_drafts:
   enabled: true
   provider: github
@@ -861,8 +880,7 @@ def test_cli_pr_draft_publish_reports_remote_issue_result(
     repo = make_repo(tmp_path)
     write(
         repo / ".docgarden" / "config.yaml",
-        """repo_name: test-docgarden
-strict_score_fail_threshold: 70
+        """strict_score_fail_threshold: 70
 pr_drafts:
   enabled: true
   provider: github
@@ -924,6 +942,28 @@ doc_type: reference
     content = (repo / "docs" / "reference.md").read_text()
     assert "owner: TODO" in content
     assert "status: draft" in content
+
+
+def test_cli_scan_reports_invalid_frontmatter_with_docgarden_error(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    repo = make_repo(tmp_path)
+    write(
+        repo / "docs" / "broken.md",
+        """---
+doc_id: [unterminated
+---
+
+# Broken Doc
+""",
+    )
+    monkeypatch.chdir(repo)
+
+    assert main(["scan"]) == 1
+    error_output = capsys.readouterr().err
+
+    assert "Invalid frontmatter" in error_output
+    assert "docs/broken.md" in error_output
 
 
 def test_cli_fix_safe_previews_and_applies_broken_link_repair(tmp_path, monkeypatch, capsys) -> None:
@@ -1001,6 +1041,89 @@ Text.
     applied_payload = json.loads(capsys.readouterr().out)
     assert applied_payload["changed_files"] == ["docs/index.md"]
     assert "[Guide](reference/guide.md)" in (repo / "docs" / "index.md").read_text()
+
+
+def test_cli_fix_safe_apply_resyncs_persisted_findings_and_plan(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    repo = make_repo(tmp_path)
+    write(
+        repo / "docs" / "index.md",
+        CANONICAL_FRONTMATTER
+        + """
+# Docs Index
+
+## Purpose
+Text.
+
+## Scope
+Text.
+
+## Source of Truth
+Text.
+
+## Rules / Definitions
+Text.
+
+## Exceptions / Caveats
+Text.
+
+## Validation / How to verify
+Text.
+
+## Related docs
+- [Guide](guide.md)
+""",
+    )
+    write(
+        repo / "docs" / "reference" / "guide.md",
+        CANONICAL_FRONTMATTER.replace("docs-index", "guide-doc")
+        + """
+# Guide
+
+## Purpose
+Text.
+
+## Scope
+Text.
+
+## Source of Truth
+Text.
+
+## Rules / Definitions
+Text.
+
+## Exceptions / Caveats
+Text.
+
+## Validation / How to verify
+Text.
+
+## Related docs
+Text.
+""",
+    )
+    monkeypatch.chdir(repo)
+
+    assert main(["scan"]) == 0
+    capsys.readouterr()
+
+    paths = repo_paths(repo)
+    before_latest = latest_events_by_id(load_findings_history(paths.findings))
+    broken_link_id = next(
+        finding_id
+        for finding_id, event in before_latest.items()
+        if event.kind == "broken-link"
+    )
+
+    assert main(["fix", "safe", "--apply"]) == 0
+    applied_payload = json.loads(capsys.readouterr().out)
+
+    after_latest = latest_events_by_id(load_findings_history(paths.findings))
+    assert applied_payload["changed_files"] == ["docs/index.md"]
+    assert after_latest[broken_link_id].status == "fixed"
+    assert after_latest[broken_link_id].event == "resolved"
+    assert load_plan(paths.plan).current_focus != broken_link_id
 
 
 def test_cli_fix_safe_route_preview_preserves_prose_mentions(tmp_path, monkeypatch, capsys) -> None:
@@ -1971,7 +2094,7 @@ def test_cli_config_show_reports_invalid_config_with_nonzero_exit(
     tmp_path, monkeypatch, capsys
 ) -> None:
     repo = make_repo(tmp_path)
-    write(repo / ".docgarden" / "config.yaml", "repo_name: [broken\n")
+    write(repo / ".docgarden" / "config.yaml", "strict_score_fail_threshold: [broken\n")
     monkeypatch.chdir(repo)
 
     assert main(["config", "show"]) == 1

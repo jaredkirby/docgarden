@@ -31,18 +31,66 @@ class SliceCatalog:
                 return item
         raise DocgardenError(f"Unknown slice: {slice_id}.")
 
-    def next_actionable_slice(self, *, start_at: str | None = None) -> SliceDefinition | None:
+    def dependency_blockers(
+        self,
+        slice_id: str,
+        *,
+        completed_overrides: set[str] | None = None,
+    ) -> list[str]:
+        slice_def = self.by_id(slice_id)
+        completed = completed_overrides or set()
+        blockers: list[str] = []
+        for dependency in slice_def.depends_on:
+            if dependency in completed:
+                continue
+            try:
+                status = self.by_id(dependency).status
+            except DocgardenError:
+                blockers.append(dependency)
+                continue
+            if status != "completed":
+                blockers.append(dependency)
+        return blockers
+
+    def next_actionable_slice(
+        self,
+        *,
+        start_at: str | None = None,
+        completed_overrides: set[str] | None = None,
+    ) -> SliceDefinition | None:
         seen_start = start_at is None
         for item in self.ordered_slices:
             if not seen_start:
                 if item.slice_id != start_at:
                     continue
                 seen_start = True
-            if item.status in {"queued", "active"}:
+            if item.status in {"queued", "active"} and not self.dependency_blockers(
+                item.slice_id,
+                completed_overrides=completed_overrides,
+            ):
                 return item
         return None
 
-    def next_after(self, slice_id: str) -> SliceDefinition | None:
+    def next_after(
+        self,
+        slice_id: str,
+        *,
+        completed_overrides: set[str] | None = None,
+    ) -> SliceDefinition | None:
+        found = False
+        for item in self.ordered_slices:
+            if not found:
+                if item.slice_id == slice_id:
+                    found = True
+                continue
+            if item.status in {"queued", "active"} and not self.dependency_blockers(
+                item.slice_id,
+                completed_overrides=completed_overrides,
+            ):
+                return item
+        return None
+
+    def next_planned_slice(self, slice_id: str) -> SliceDefinition | None:
         found = False
         for item in self.ordered_slices:
             if not found:

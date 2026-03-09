@@ -7,6 +7,8 @@ from typing import Any
 
 import yaml
 
+from .errors import MarkdownError
+
 FRONTMATTER_BOUNDARY = "---"
 MARKDOWN_LINK_RE = re.compile(r"\[[^\]]+\]\(([^)]+)\)")
 HEADING_RE = re.compile(r"^(#{1,6})\s+(.+?)\s*$", re.MULTILINE)
@@ -28,7 +30,17 @@ class Document:
     raw_text: str = field(repr=False)
 
 
-def split_frontmatter(text: str) -> tuple[dict[str, Any], str]:
+def _source_label(source: Path | str | None) -> str:
+    if isinstance(source, Path):
+        return str(source)
+    if isinstance(source, str) and source.strip():
+        return source
+    return "document text"
+
+
+def split_frontmatter(
+    text: str, *, source: Path | str | None = None
+) -> tuple[dict[str, Any], str]:
     if not text.startswith(f"{FRONTMATTER_BOUNDARY}\n"):
         return {}, text
 
@@ -38,7 +50,16 @@ def split_frontmatter(text: str) -> tuple[dict[str, Any], str]:
 
     yaml_text = parts[0][len(FRONTMATTER_BOUNDARY) + 1 :]
     body = parts[1]
-    data = yaml.safe_load(yaml_text) or {}
+    try:
+        data = yaml.safe_load(yaml_text) or {}
+    except yaml.YAMLError as exc:
+        raise MarkdownError(
+            f"Invalid frontmatter in {_source_label(source)}: {exc}."
+        ) from exc
+    if not isinstance(data, dict):
+        raise MarkdownError(
+            f"Invalid frontmatter in {_source_label(source)}: expected a YAML mapping."
+        )
     return data, body
 
 
@@ -51,7 +72,7 @@ def dump_frontmatter(data: dict[str, Any]) -> str:
 
 
 def replace_frontmatter(text: str, data: dict[str, Any]) -> str:
-    _, body = split_frontmatter(text)
+    _, body = split_frontmatter(text, source="provided markdown text")
     return dump_frontmatter(data) + "\n" + body.lstrip("\n")
 
 
@@ -87,8 +108,15 @@ def section_content_map(body: str) -> dict[str, str]:
 
 
 def parse_document(path: Path, repo_root: Path) -> Document:
-    raw_text = path.read_text()
-    frontmatter, body = split_frontmatter(raw_text)
+    try:
+        raw_text = path.read_text(encoding="utf-8")
+    except UnicodeDecodeError as exc:
+        raise MarkdownError(
+            f"Could not decode markdown document {path} as UTF-8."
+        ) from exc
+    except OSError as exc:
+        raise MarkdownError(f"Could not read markdown document {path}: {exc}.") from exc
+    frontmatter, body = split_frontmatter(raw_text, source=path)
     headings = [match.group(2).strip() for match in HEADING_RE.finditer(body)]
     links = extract_markdown_links(raw_text)
     routed_paths = []

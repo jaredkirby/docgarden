@@ -11,7 +11,7 @@ applies_to:
 source_of_truth:
   - SPEC-FULL.md
   - docs/design-docs/docgarden-spec.md
-  - docgarden/scanner.py
+  - docgarden/scan/scanner.py
 verification:
   method: implementation-linked
   confidence: medium

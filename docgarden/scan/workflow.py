@@ -3,10 +3,10 @@ from __future__ import annotations
 from dataclasses import asdict
 from datetime import datetime
 
-from .config import Config
-from .files import atomic_write_text
-from .models import RepoPaths, ScanRunResult
-from .quality import build_scorecard
+from ..config import Config
+from ..files import atomic_write_text
+from ..models import RepoPaths, ScanRunResult
+from ..quality import build_scorecard
 from .scanner import (
     CHANGED_SCOPE_RECOMPUTED_VIEWS,
     CHANGED_SCOPE_SKIPPED_VIEWS,
@@ -14,7 +14,7 @@ from .scanner import (
     scan_changed_files,
     scan_repo,
 )
-from .state import (
+from ..state import (
     active_findings_from_latest_events,
     actionable_findings_from_latest_events,
     append_scan_events,

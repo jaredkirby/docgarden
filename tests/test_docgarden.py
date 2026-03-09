@@ -8,7 +8,7 @@ from pathlib import Path
 
 from docgarden.errors import DocgardenError
 from docgarden.fixers import apply_safe_fixes
-from docgarden.scanner import determine_changed_docs, scan_changed_files, scan_repo
+from docgarden.scan.scanner import determine_changed_docs, scan_changed_files, scan_repo
 
 
 CANONICAL_FRONTMATTER = """---
@@ -240,7 +240,7 @@ class DocgardenTests(unittest.TestCase):
         temp_dir = Path(tempfile.mkdtemp())
         write(
             temp_dir / ".docgarden" / "config.yaml",
-            "repo_name: test-docgarden\nstrict_score_fail_threshold: 70\n",
+            "strict_score_fail_threshold: 70\n",
         )
         write(
             temp_dir / "AGENTS.md",

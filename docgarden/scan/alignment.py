@@ -9,7 +9,7 @@ from datetime import datetime
 from pathlib import Path
 from urllib.parse import unquote, urlparse
 
-from .markdown import (
+from ..markdown import (
     Document,
     extract_markdown_links,
     extract_sections,
@@ -17,9 +17,9 @@ from .markdown import (
     resolve_link_target,
     section_content_map,
 )
-from .models import Finding, FindingContext
-from .scan_document_rules import (
-    document_context,
+from ..models import Finding
+from .findings import FindingSpec, build_document_finding, build_finding
+from .document_rules import (
     generated_doc_contract_finding,
     generated_doc_stale_finding,
 )
@@ -362,46 +362,46 @@ def promotion_suggestion_findings(
                     + "."
                 )
 
-        context = FindingContext(
-            rel_path=source_files[0],
-            domain="docs",
-            discovered_at=discovered_at,
-            files=source_files,
-        )
         findings.append(
-            Finding.open_issue(
-                context,
-                kind="promotion-suggestion",
-                severity="low",
-                summary=(
-                    "Repeated transient rule should move into a canonical doc: "
-                    f"{summary_statement}"
+            build_finding(
+                FindingSpec(
+                    kind="promotion-suggestion",
+                    severity="low",
+                    summary=(
+                        "Repeated transient rule should move into a canonical doc: "
+                        f"{summary_statement}"
+                    ),
+                    evidence=evidence,
+                    recommended_action=recommended_action,
+                    cluster="promotion-opportunities",
+                    suffix=stable_suffix("promotion", normalized_rule),
+                    details={
+                        "candidate_destinations": candidate_destinations,
+                        "primary_canonical_destination": primary_destination,
+                        "candidate_destination_reasons": {
+                            item.rel_path: list(item.reasons)
+                            for item in candidate_suggestions
+                        },
+                        "normalized_rule": normalized_rule,
+                        "supporting_destination_docs": supporting_destinations,
+                        "supporting_destination_reasons": {
+                            item.rel_path: list(item.reasons)
+                            for item in supporting_suggestions
+                        },
+                        "source_occurrences": [
+                            {
+                                "file": item.rel_path,
+                                "section": item.section,
+                                "statement": item.statement,
+                            }
+                            for item in ordered_occurrences
+                        ],
+                    },
                 ),
-                evidence=evidence,
-                recommended_action=recommended_action,
-                safe_to_autofix=False,
-                cluster="promotion-opportunities",
-                suffix=stable_suffix("promotion", normalized_rule),
-                details={
-                    "candidate_destinations": candidate_destinations,
-                    "primary_canonical_destination": primary_destination,
-                    "candidate_destination_reasons": {
-                        item.rel_path: list(item.reasons) for item in candidate_suggestions
-                    },
-                    "normalized_rule": normalized_rule,
-                    "supporting_destination_docs": supporting_destinations,
-                    "supporting_destination_reasons": {
-                        item.rel_path: list(item.reasons) for item in supporting_suggestions
-                    },
-                    "source_occurrences": [
-                        {
-                            "file": item.rel_path,
-                            "section": item.section,
-                            "statement": item.statement,
-                        }
-                        for item in ordered_occurrences
-                    ],
-                },
+                rel_path=source_files[0],
+                domain="docs",
+                discovered_at=discovered_at,
+                files=source_files,
             )
         )
     return findings
@@ -464,26 +464,24 @@ def missing_source_of_truth_findings(
         sources = []
 
     findings: list[Finding] = []
-    context = FindingContext(
-        rel_path=document.rel_path,
-        domain=str(document.frontmatter.get("domain", "unknown")),
-        discovered_at=discovered_at,
-    )
     for source in sources:
         target = resolve_repo_artifact(repo_root, source)
         if target is None or target.exists():
             continue
         findings.append(
-            Finding.open_issue(
-                context,
-                kind="missing-source-artifact",
-                severity="high",
-                summary=f"{document.rel_path} references a missing source_of_truth artifact.",
-                evidence=[f"Missing artifact: {source}"],
-                recommended_action="Point source_of_truth at an existing local artifact.",
-                safe_to_autofix=False,
-                cluster="artifact-drift",
-                suffix=stable_suffix("source", source),
+            build_document_finding(
+                document,
+                FindingSpec(
+                    kind="missing-source-artifact",
+                    severity="high",
+                    summary=f"{document.rel_path} references a missing source_of_truth artifact.",
+                    evidence=[f"Missing artifact: {source}"],
+                    recommended_action="Point source_of_truth at an existing local artifact.",
+                    cluster="artifact-drift",
+                    suffix=stable_suffix("source", source),
+                ),
+                domain=str(document.frontmatter.get("domain", "unknown")),
+                discovered_at=discovered_at,
             )
         )
     return findings
@@ -494,11 +492,6 @@ def invalid_validation_command_findings(
     *,
     discovered_at: str,
 ) -> list[Finding]:
-    context = FindingContext(
-        rel_path=document.rel_path,
-        domain=str(document.frontmatter.get("domain", "unknown")),
-        discovered_at=discovered_at,
-    )
     findings: list[Finding] = []
     for command in extract_validation_commands(document.body):
         if not is_docgarden_command(command):
@@ -506,16 +499,19 @@ def invalid_validation_command_findings(
         if is_supported_docgarden_command(command):
             continue
         findings.append(
-            Finding.open_issue(
-                context,
-                kind="invalid-validation-command",
-                severity="medium",
-                summary=f"{document.rel_path} documents an unsupported docgarden command.",
-                evidence=[f"Unsupported command: {command}"],
-                recommended_action="Update the validation step to a supported docgarden CLI command.",
-                safe_to_autofix=False,
-                cluster="workflow-drift",
-                suffix=stable_suffix("command", command),
+            build_document_finding(
+                document,
+                FindingSpec(
+                    kind="invalid-validation-command",
+                    severity="medium",
+                    summary=f"{document.rel_path} documents an unsupported docgarden command.",
+                    evidence=[f"Unsupported command: {command}"],
+                    recommended_action="Update the validation step to a supported docgarden CLI command.",
+                    cluster="workflow-drift",
+                    suffix=stable_suffix("command", command),
+                ),
+                domain=str(document.frontmatter.get("domain", "unknown")),
+                discovered_at=discovered_at,
             )
         )
     return findings
@@ -884,27 +880,29 @@ def workflow_asset_findings(
     if not references:
         return []
 
-    context = document_context(document, discovered_at=discovered_at)
     findings: list[Finding] = []
     for raw_reference, (heading, target) in sorted(references.items()):
         findings.append(
-            Finding.open_issue(
-                context,
-                kind="missing-workflow-asset",
-                severity="medium",
-                summary=f"{document.rel_path} references a missing workflow asset.",
-                evidence=[
-                    f"Workflow section: {heading}",
-                    f"Missing asset reference: {raw_reference}",
-                    f"Resolved local path: {target.relative_to(repo_root)}",
-                ],
-                recommended_action=(
-                    "Update the workflow reference to an existing repo-owned script or path, "
-                    "or remove the stale instruction."
+            build_document_finding(
+                document,
+                FindingSpec(
+                    kind="missing-workflow-asset",
+                    severity="medium",
+                    summary=f"{document.rel_path} references a missing workflow asset.",
+                    evidence=[
+                        f"Workflow section: {heading}",
+                        f"Missing asset reference: {raw_reference}",
+                        f"Resolved local path: {target.relative_to(repo_root)}",
+                    ],
+                    recommended_action=(
+                        "Update the workflow reference to an existing repo-owned script or path, "
+                        "or remove the stale instruction."
+                    ),
+                    cluster="workflow-drift",
+                    suffix=stable_suffix("asset", raw_reference),
                 ),
-                safe_to_autofix=False,
-                cluster="workflow-drift",
-                suffix=stable_suffix("asset", raw_reference),
+                domain=str(document.frontmatter.get("domain", "unknown")),
+                discovered_at=discovered_at,
             )
         )
     return findings
@@ -1170,14 +1168,23 @@ def infer_promotion_destination_docs(
     documents: list[Document],
     repo_root: Path,
 ) -> list[PromotionDestinationSuggestion]:
-    suggestions = _destination_suggestions_from_hints(
-        CANONICAL_PROMOTION_DESTINATION_HINTS,
-        normalized_rule=normalized_rule,
-        source_files=source_files,
-        repo_root=repo_root,
-    )
+    lower_source_paths = " ".join(source_files).lower()
+    suggestions: list[tuple[int, str, tuple[str, ...]]] = []
+    for doc_path, hints in CANONICAL_PROMOTION_DESTINATION_HINTS:
+        if not (repo_root / doc_path).exists():
+            continue
+        matched_hints = tuple(
+            hint for hint in hints if hint in normalized_rule or hint in lower_source_paths
+        )
+        if not matched_hints:
+            continue
+        suggestions.append((len(matched_hints), doc_path, matched_hints))
+    suggestions.sort(key=lambda item: (-item[0], item[1]))
     if suggestions:
-        return suggestions
+        return [
+            PromotionDestinationSuggestion(rel_path=doc_path, reasons=matched_hints)
+            for _, doc_path, matched_hints in suggestions[:3]
+        ]
     return _fallback_promotion_destination(documents=documents, source_files=source_files)
 
 

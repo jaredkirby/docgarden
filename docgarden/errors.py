@@ -13,3 +13,7 @@ class ConfigError(DocgardenError):
 
 class StateError(DocgardenError):
     """Raised when persisted .docgarden state is missing or malformed."""
+
+
+class MarkdownError(DocgardenError):
+    """Raised when markdown documents cannot be parsed safely."""

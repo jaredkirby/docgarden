@@ -11,16 +11,15 @@ from .errors import ConfigError
 
 @dataclass(slots=True)
 class Config:
-    repo_name: str = "docgarden"
     strict_score_fail_threshold: int = 70
     critical_domains: list[str] = field(default_factory=list)
     domain_weights: dict[str, int | float] = field(default_factory=dict)
-    review_defaults: dict[str, int] = field(default_factory=dict)
-    safe_autofix: dict[str, Any] = field(default_factory=dict)
     block_on: list[str] = field(default_factory=list)
     pr_drafts: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
+        if not isinstance(self.strict_score_fail_threshold, int):
+            raise TypeError("strict_score_fail_threshold must be an integer")
         if not isinstance(self.critical_domains, list) or not all(
             isinstance(item, str) for item in self.critical_domains
         ):
@@ -63,12 +62,9 @@ class Config:
 
     def to_dict(self) -> dict[str, Any]:
         return {
-            "repo_name": self.repo_name,
             "strict_score_fail_threshold": self.strict_score_fail_threshold,
             "critical_domains": self.critical_domains,
             "domain_weights": self.domain_weights,
-            "review_defaults": self.review_defaults,
-            "safe_autofix": self.safe_autofix,
             "block_on": self.block_on,
             "pr_drafts": self.pr_drafts,
         }

@@ -490,31 +490,22 @@ workaround notes, `docgarden` should propose promoting it into a canonical doc.
 The working draft proposes a config shaped like:
 
 ```yaml
-repo_name: rmn-assistant
 strict_score_fail_threshold: 70
 critical_domains:
   - metrics
   - platforms
   - workflows
   - accounts
-review_defaults:
-  canonical_review_cycle_days: 30
-  account_plan_review_cycle_days: 7
-  workflow_review_cycle_days: 45
-safe_autofix:
-  enabled: true
-  allow:
-    - links
-    - indexes
-    - metadata
-    - headings
-    - generated_docs
 block_on:
   - broken_agents_routes
   - missing_frontmatter_on_canonical
   - stale_verified_canonical_docs
   - active_exec_plan_missing_progress
 ```
+
+Only live runtime knobs belong in this file. Fields like `repo_name`,
+`review_defaults`, and `safe_autofix` were removed from the suggested config
+surface because the current package does not honor them.
 
 ### 19. MVP build order
 

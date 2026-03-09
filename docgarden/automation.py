@@ -6,38 +6,39 @@ from typing import Any, Callable
 
 from .config import Config
 from .markdown import Document, parse_document
-from .models import SCORE_RELEVANT_FINDING_STATUSES
-from .scan_workflow import run_scan
+from .models import FindingRecord, SCORE_RELEVANT_FINDING_STATUSES
+from .scan.workflow import run_scan
 from .state import latest_events_by_id, load_findings_history, load_score
 
 BlockingRuleMatcher = Callable[
-    [dict[str, Any], Path, dict[str, Document | None]],
+    [FindingRecord, Path, dict[str, Document | None]],
     bool,
 ]
 
 
+def _coerce_record(event: FindingRecord | dict[str, Any]) -> FindingRecord:
+    if isinstance(event, FindingRecord):
+        return event
+    return FindingRecord.from_dict(event)
+
+
 def _score_relevant_events(
-    latest_events: dict[str, dict[str, Any]]
-) -> list[dict[str, Any]]:
+    latest_events: dict[str, FindingRecord | dict[str, Any]]
+) -> list[FindingRecord]:
+    records = (_coerce_record(event) for event in latest_events.values())
     return sorted(
-        (
-            event
-            for event in latest_events.values()
-            if event.get("status") in SCORE_RELEVANT_FINDING_STATUSES
-        ),
-        key=lambda event: str(event.get("id", "")),
+        (event for event in records if event.status in SCORE_RELEVANT_FINDING_STATUSES),
+        key=lambda event: event.id,
     )
 
 
 def _primary_document(
-    event: dict[str, Any],
+    event: FindingRecord,
     repo_root: Path,
     cache: dict[str, Document | None],
 ) -> Document | None:
-    raw_files = event.get("files")
-    files = raw_files if isinstance(raw_files, list) else []
-    for rel_path in files:
-        if not isinstance(rel_path, str) or not rel_path:
+    for rel_path in event.files:
+        if not rel_path:
             continue
         cached = cache.get(rel_path)
         if rel_path in cache:
@@ -54,36 +55,32 @@ def _primary_document(
 
 
 def _rule_broken_agents_routes(
-    event: dict[str, Any],
+    event: FindingRecord,
     repo_root: Path,
     cache: dict[str, Document | None],
 ) -> bool:
     del repo_root, cache
-    if event.get("kind") not in {"broken-route", "stale-route"}:
+    if event.kind not in {"broken-route", "stale-route"}:
         return False
-    raw_files = event.get("files")
-    files = raw_files if isinstance(raw_files, list) else []
-    return any(path == "AGENTS.md" for path in files)
+    return any(path == "AGENTS.md" for path in event.files)
 
 
 def _rule_missing_frontmatter_on_canonical(
-    event: dict[str, Any],
+    event: FindingRecord,
     repo_root: Path,
     cache: dict[str, Document | None],
 ) -> bool:
     del repo_root, cache
-    if event.get("kind") != "missing-frontmatter":
+    if event.kind != "missing-frontmatter":
         return False
-    raw_files = event.get("files")
-    files = raw_files if isinstance(raw_files, list) else []
     return any(
-        isinstance(path, str) and path.startswith("docs/")
-        for path in files
+        path.startswith("docs/")
+        for path in event.files
     )
 
 
 def _is_verified_canonical_document(
-    event: dict[str, Any],
+    event: FindingRecord,
     repo_root: Path,
     cache: dict[str, Document | None],
 ) -> bool:
@@ -97,29 +94,24 @@ def _is_verified_canonical_document(
 
 
 def _rule_stale_verified_canonical_docs(
-    event: dict[str, Any],
+    event: FindingRecord,
     repo_root: Path,
     cache: dict[str, Document | None],
 ) -> bool:
-    if event.get("kind") not in {"stale-review", "verified-without-sources"}:
+    if event.kind not in {"stale-review", "verified-without-sources"}:
         return False
     return _is_verified_canonical_document(event, repo_root, cache)
 
 
 def _rule_active_exec_plan_missing_progress(
-    event: dict[str, Any],
+    event: FindingRecord,
     repo_root: Path,
     cache: dict[str, Document | None],
 ) -> bool:
-    if event.get("kind") != "missing-sections":
+    if event.kind != "missing-sections":
         return False
 
-    details = event.get("details")
-    missing_sections = (
-        details.get("missing_sections")
-        if isinstance(details, dict)
-        else None
-    )
+    missing_sections = event.details.get("missing_sections")
     if not isinstance(missing_sections, list) or "Progress" not in missing_sections:
         return False
 
@@ -152,17 +144,15 @@ BLOCKING_RULES: dict[str, tuple[str, BlockingRuleMatcher]] = {
 }
 
 
-def _summarize_event(event: dict[str, Any]) -> dict[str, Any]:
-    raw_files = event.get("files")
-    files = [item for item in raw_files if isinstance(item, str)] if isinstance(raw_files, list) else []
+def _summarize_event(event: FindingRecord) -> dict[str, Any]:
     return {
-        "id": event.get("id"),
-        "kind": event.get("kind"),
-        "status": event.get("status"),
-        "severity": event.get("severity"),
-        "summary": event.get("summary"),
-        "files": files,
-        "recommended_action": event.get("recommended_action"),
+        "id": event.id,
+        "kind": event.kind,
+        "status": event.status,
+        "severity": event.severity,
+        "summary": event.summary,
+        "files": list(event.files),
+        "recommended_action": event.recommended_action,
     }
 
 
