@@ -7,7 +7,7 @@ from pathlib import Path
 from docgarden.errors import ConfigError, DocgardenError, StateError
 from docgarden.files import atomic_write_text
 from docgarden.markdown import parse_document, replace_frontmatter, resolve_link_target
-from docgarden.models import Finding, FindingContext, PlanState, Scorecard
+from docgarden.models import Finding, FindingContext, PlanState, RepoPaths, Scorecard
 from docgarden.quality import build_scorecard, write_quality_score
 from docgarden.scan_alignment import (
     extract_validation_commands,
@@ -25,6 +25,7 @@ from docgarden.state import (
     ensure_state_dirs,
     latest_events_by_id,
     load_findings_history,
+    ordered_active_events,
     write_json,
 )
 
@@ -289,6 +290,95 @@ def test_state_helpers_preserve_manual_status_metadata_across_scans(tmp_path) ->
     )
     assert scorecard.overall_score == 100
     assert scorecard.strict_score < scorecard.overall_score
+
+
+def test_accepted_debt_remains_score_tracked_but_leaves_action_queue(tmp_path) -> None:
+    state_dir = tmp_path / ".docgarden"
+    ensure_state_dirs(state_dir)
+    findings_path = state_dir / "findings.jsonl"
+
+    context = FindingContext(
+        rel_path="docs/index.md",
+        domain="docs",
+        discovered_at="2026-03-08T12:00:00",
+    )
+    finding = Finding.open_issue(
+        context,
+        kind="missing-sections",
+        severity="medium",
+        summary="Missing headings.",
+        evidence=["Missing headings: Scope"],
+        recommended_action="Add the missing section.",
+        safe_to_autofix=True,
+        cluster="structure-gaps",
+        suffix="sections",
+    )
+
+    append_scan_events(findings_path, [finding], datetime(2026, 3, 8, 12, 0, 0))
+    append_finding_status_event(
+        findings_path,
+        finding.id,
+        status="accepted_debt",
+        event_at=datetime(2026, 3, 8, 13, 0, 0),
+        attestation="Known gap accepted until the next planning cycle.",
+        resolved_by="kirby",
+        resolution_note="Tracked as intentional doc debt for now.",
+    )
+
+    latest = latest_events_by_id(load_findings_history(findings_path))
+    score_tracked_findings = active_findings_from_latest_events(latest)
+    paths = RepoPaths(
+        repo_root=tmp_path,
+        state_dir=state_dir,
+        config=state_dir / "config.yaml",
+        findings=findings_path,
+        plan=state_dir / "plan.json",
+        score=state_dir / "score.json",
+        quality=tmp_path / "docs" / "QUALITY_SCORE.md",
+    )
+
+    assert [item.status for item in score_tracked_findings] == ["accepted_debt"]
+    assert ordered_active_events(paths) == []
+
+
+def test_scan_auto_resolves_accepted_debt_when_detector_stops_reporting_it(
+    tmp_path,
+) -> None:
+    state_dir = tmp_path / ".docgarden"
+    ensure_state_dirs(state_dir)
+    findings_path = state_dir / "findings.jsonl"
+
+    context = FindingContext(
+        rel_path="docs/index.md",
+        domain="docs",
+        discovered_at="2026-03-08T12:00:00",
+    )
+    finding = Finding.open_issue(
+        context,
+        kind="missing-sections",
+        severity="medium",
+        summary="Missing headings.",
+        evidence=["Missing headings: Scope"],
+        recommended_action="Add the missing section.",
+        safe_to_autofix=True,
+        cluster="structure-gaps",
+        suffix="sections",
+    )
+
+    append_scan_events(findings_path, [finding], datetime(2026, 3, 8, 12, 0, 0))
+    append_finding_status_event(
+        findings_path,
+        finding.id,
+        status="accepted_debt",
+        event_at=datetime(2026, 3, 8, 13, 0, 0),
+        attestation="Known gap accepted until the next planning cycle.",
+    )
+
+    latest = append_scan_events(findings_path, [], datetime(2026, 3, 8, 14, 0, 0))
+
+    assert latest[finding.id]["status"] == "fixed"
+    assert latest[finding.id]["event"] == "resolved"
+    assert latest[finding.id]["resolved_at"] == "2026-03-08T14:00:00"
 
 
 def test_append_finding_status_event_supports_additional_statuses(tmp_path) -> None:

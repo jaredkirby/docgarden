@@ -9,6 +9,7 @@ from .quality import build_scorecard
 from .scanner import scan_repo
 from .state import (
     active_findings_from_latest_events,
+    actionable_findings_from_latest_events,
     append_scan_events,
     build_plan,
     compute_scan_hash,
@@ -51,12 +52,13 @@ def run_scan(paths: RepoPaths, *, scan_time: datetime | None = None) -> ScanRunR
     now = scan_time or datetime.now()
     findings, domain_doc_counts, documents = scan_repo(paths.repo_root)
     latest = append_scan_events(paths.findings, findings, now)
-    active_findings = active_findings_from_latest_events(latest)
-    scorecard = build_scorecard(active_findings, domain_doc_counts, now)
+    score_tracked_findings = active_findings_from_latest_events(latest)
+    actionable_findings = actionable_findings_from_latest_events(latest)
+    scorecard = build_scorecard(score_tracked_findings, domain_doc_counts, now)
     write_score(paths.score, scorecard)
     previous_plan = load_plan(paths.plan) if paths.plan.exists() else None
     plan = build_plan(
-        active_findings,
+        actionable_findings,
         compute_scan_hash([doc.rel_path for doc in documents]),
         now,
         previous_plan=previous_plan,

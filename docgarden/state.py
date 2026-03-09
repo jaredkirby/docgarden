@@ -12,9 +12,11 @@ from typing import Any
 from .errors import StateError
 from .files import atomic_write_text
 from .models import (
+    ACTIONABLE_FINDING_STATUSES,
+    AUTO_RESOLVED_FINDING_STATUSES,
     FINDING_STATUSES,
-    INACTIVE_FINDING_STATUSES,
     RESOLVED_FINDING_STATUSES,
+    SCORE_RELEVANT_FINDING_STATUSES,
     Finding,
     PlanState,
     RepoPaths,
@@ -64,8 +66,12 @@ def latest_events_by_id(events: list[dict[str, Any]]) -> dict[str, dict[str, Any
     return latest
 
 
-def _is_active_event(event: dict[str, Any]) -> bool:
-    return event.get("status") not in INACTIVE_FINDING_STATUSES
+def _is_actionable_event(event: dict[str, Any]) -> bool:
+    return event.get("status") in ACTIONABLE_FINDING_STATUSES
+
+
+def _is_score_relevant_event(event: dict[str, Any]) -> bool:
+    return event.get("status") in SCORE_RELEVANT_FINDING_STATUSES
 
 
 def _event_priority_key(event: dict[str, Any]) -> tuple[int, str, str]:
@@ -81,7 +87,7 @@ def ordered_active_events(paths: RepoPaths) -> list[dict[str, Any]]:
     active = {
         finding_id: event
         for finding_id, event in latest.items()
-        if _is_active_event(event)
+        if _is_actionable_event(event)
     }
     if not active:
         return []
@@ -125,7 +131,17 @@ def active_findings_from_latest_events(
     latest: dict[str, dict[str, Any]]
 ) -> list[Finding]:
     active_events = sorted(
-        (event for event in latest.values() if _is_active_event(event)),
+        (event for event in latest.values() if _is_score_relevant_event(event)),
+        key=_event_priority_key,
+    )
+    return [Finding.from_dict(event) for event in active_events]
+
+
+def actionable_findings_from_latest_events(
+    latest: dict[str, dict[str, Any]]
+) -> list[Finding]:
+    active_events = sorted(
+        (event for event in latest.values() if _is_actionable_event(event)),
         key=_event_priority_key,
     )
     return [Finding.from_dict(event) for event in active_events]
@@ -155,7 +171,7 @@ def append_scan_events(
         latest[finding.id] = payload
 
     for finding_id, prior in list(latest.items()):
-        if prior.get("status") in INACTIVE_FINDING_STATUSES:
+        if prior.get("status") not in AUTO_RESOLVED_FINDING_STATUSES:
             continue
         if finding_id not in active_by_id:
             resolved = dict(prior)

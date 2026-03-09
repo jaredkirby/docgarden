@@ -2,12 +2,13 @@ from __future__ import annotations
 
 import json
 from dataclasses import asdict
+from datetime import datetime
 from pathlib import Path
 
 from docgarden.cli import main
 from docgarden.cli_commands import repo_paths
 from docgarden.scan_workflow import run_scan
-from docgarden.state import load_plan
+from docgarden.state import append_finding_status_event, load_plan
 
 CANONICAL_FRONTMATTER = """---
 doc_id: docs-index
@@ -231,6 +232,96 @@ Text.
     assert main(["status"]) == 0
     status_payload = json.loads(capsys.readouterr().out)
     assert status_payload["open_ids"][:2] == [beta_id, alpha_id]
+
+
+def test_cli_status_and_next_hide_accepted_debt_from_action_queue(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    repo = make_repo(tmp_path)
+    write(
+        repo / "docs" / "index.md",
+        CANONICAL_FRONTMATTER
+        + """
+# Docs Index
+
+See [Stale](stale.md).
+
+## Purpose
+Text.
+
+## Scope
+Text.
+
+## Source of Truth
+Text.
+
+## Rules / Definitions
+Text.
+
+## Exceptions / Caveats
+Text.
+
+## Validation / How to verify
+Text.
+
+## Related docs
+Text.
+""",
+    )
+    write(
+        repo / "docs" / "stale.md",
+        CANONICAL_FRONTMATTER.replace("docs-index", "stale-doc").replace(
+            "2026-03-08", "2026-01-01"
+        )
+        + """
+# Stale Doc
+
+## Purpose
+Text.
+
+## Scope
+Text.
+
+## Source of Truth
+Text.
+
+## Rules / Definitions
+Text.
+
+## Exceptions / Caveats
+Text.
+
+## Validation / How to verify
+Text.
+
+## Related docs
+Text.
+""",
+    )
+    monkeypatch.chdir(repo)
+    assert main(["scan"]) == 0
+    capsys.readouterr()
+
+    paths = repo_paths(repo)
+    finding_id = json.loads(paths.findings.read_text().splitlines()[0])["id"]
+    append_finding_status_event(
+        paths.findings,
+        finding_id,
+        status="accepted_debt",
+        event_at=datetime(2026, 3, 8, 13, 0, 0),
+        attestation="Known gap accepted until the next planning cycle.",
+        resolved_by="kirby",
+    )
+    run_scan(paths, scan_time=datetime(2026, 3, 8, 14, 0, 0))
+
+    assert main(["status"]) == 0
+    status_payload = json.loads(capsys.readouterr().out)
+    assert status_payload["active_findings"] == 0
+    assert status_payload["open_ids"] == []
+    assert status_payload["strict_score"] < status_payload["overall_score"]
+
+    assert main(["next"]) == 0
+    assert capsys.readouterr().out.strip() == "No open findings."
 
 
 def test_scan_preserves_existing_plan_state(tmp_path) -> None:

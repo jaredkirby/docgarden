@@ -14,7 +14,13 @@ FINDING_STATUSES = frozenset(
         "false_positive",
     }
 )
-INACTIVE_FINDING_STATUSES = frozenset({"fixed", "false_positive"})
+ACTIONABLE_FINDING_STATUSES = frozenset({"open", "in_progress", "needs_human"})
+SCORE_RELEVANT_FINDING_STATUSES = frozenset(
+    {"open", "in_progress", "accepted_debt", "needs_human"}
+)
+AUTO_RESOLVED_FINDING_STATUSES = frozenset(
+    {"open", "in_progress", "accepted_debt", "needs_human"}
+)
 RESOLVED_FINDING_STATUSES = frozenset(
     {"fixed", "accepted_debt", "needs_human", "false_positive"}
 )
