@@ -382,6 +382,250 @@ Text.
     assert refreshed_payload["event"] == "resolved"
 
 
+def test_cli_fix_safe_previews_and_applies_metadata_skeleton(tmp_path, monkeypatch, capsys) -> None:
+    repo = make_repo(tmp_path)
+    write(
+        repo / "docs" / "reference.md",
+        """---
+doc_type: reference
+---
+
+# Reference Doc
+""",
+    )
+    monkeypatch.chdir(repo)
+
+    assert main(["fix", "safe"]) == 0
+    preview_payload = json.loads(capsys.readouterr().out)
+    planned = next(
+        item for item in preview_payload["planned_changes"] if item["kind"] == "missing-metadata"
+    )
+
+    assert planned["files"] == ["docs/reference.md"]
+    assert planned["changes"] == [
+        "Add metadata skeleton fields: doc_id, domain, last_reviewed, owner, review_cycle_days, status."
+    ]
+
+    assert main(["fix", "safe", "--apply"]) == 0
+    applied_payload = json.loads(capsys.readouterr().out)
+    assert applied_payload["changed_files"] == ["docs/reference.md"]
+    content = (repo / "docs" / "reference.md").read_text()
+    assert "owner: TODO" in content
+    assert "status: draft" in content
+
+
+def test_cli_fix_safe_previews_and_applies_broken_link_repair(tmp_path, monkeypatch, capsys) -> None:
+    repo = make_repo(tmp_path)
+    write(
+        repo / "docs" / "index.md",
+        CANONICAL_FRONTMATTER
+        + """
+# Docs Index
+
+## Purpose
+Text.
+
+## Scope
+Text.
+
+## Source of Truth
+Text.
+
+## Rules / Definitions
+Text.
+
+## Exceptions / Caveats
+Text.
+
+## Validation / How to verify
+Text.
+
+## Related docs
+- [Guide](guide.md)
+""",
+    )
+    write(
+        repo / "docs" / "reference" / "guide.md",
+        CANONICAL_FRONTMATTER.replace("docs-index", "guide-doc")
+        + """
+# Guide
+
+## Purpose
+Text.
+
+## Scope
+Text.
+
+## Source of Truth
+Text.
+
+## Rules / Definitions
+Text.
+
+## Exceptions / Caveats
+Text.
+
+## Validation / How to verify
+Text.
+
+## Related docs
+Text.
+""",
+    )
+    monkeypatch.chdir(repo)
+
+    assert main(["fix", "safe"]) == 0
+    preview_payload = json.loads(capsys.readouterr().out)
+    planned = next(
+        item for item in preview_payload["planned_changes"] if item["kind"] == "broken-link"
+    )
+
+    assert planned["files"] == ["docs/index.md"]
+    assert planned["changes"] == [
+        "Replace markdown link target `guide.md` with `reference/guide.md`."
+    ]
+
+    assert main(["fix", "safe", "--apply"]) == 0
+    applied_payload = json.loads(capsys.readouterr().out)
+    assert applied_payload["changed_files"] == ["docs/index.md"]
+    assert "[Guide](reference/guide.md)" in (repo / "docs" / "index.md").read_text()
+
+
+def test_cli_fix_safe_route_preview_preserves_prose_mentions(tmp_path, monkeypatch, capsys) -> None:
+    repo = make_repo(tmp_path)
+    write(
+        repo / "docs" / "index.md",
+        CANONICAL_FRONTMATTER
+        + """
+# Docs Index
+
+## Purpose
+Text.
+
+## Scope
+Text.
+
+## Source of Truth
+Text.
+
+## Rules / Definitions
+Text.
+
+## Exceptions / Caveats
+Text.
+
+## Validation / How to verify
+Text.
+
+## Related docs
+- [Legacy Plan](docs/archive/legacy-plan.md)
+
+Keep the prose mention docs/archive/legacy-plan.md as a historical note.
+""",
+    )
+    write(
+        repo / "docs" / "archive" / "legacy-plan.md",
+        """---
+doc_id: legacy-plan
+doc_type: archive
+domain: archive
+owner: kirby
+status: archived
+last_reviewed: 2026-03-08
+review_cycle_days: 30
+superseded_by:
+  - docs/current.md
+---
+
+# Legacy Plan
+
+## Archived reason
+Text.
+
+## Archived date
+2026-03-08
+
+## Replacement doc, if any
+- [Current](docs/current.md)
+""",
+    )
+    write(
+        repo / "docs" / "current.md",
+        CANONICAL_FRONTMATTER.replace("docs-index", "current-doc")
+        + """
+# Current
+
+## Purpose
+Text.
+
+## Scope
+Text.
+
+## Source of Truth
+Text.
+
+## Rules / Definitions
+Text.
+
+## Exceptions / Caveats
+Text.
+
+## Validation / How to verify
+Text.
+
+## Related docs
+Text.
+""",
+    )
+    monkeypatch.chdir(repo)
+
+    assert main(["fix", "safe"]) == 0
+    preview_payload = json.loads(capsys.readouterr().out)
+    planned = next(
+        item for item in preview_payload["planned_changes"] if item["kind"] == "stale-route"
+    )
+
+    assert planned["changes"] == [
+        "Replace route reference `docs/archive/legacy-plan.md` with `docs/current.md`."
+    ]
+
+    assert main(["fix", "safe", "--apply"]) == 0
+    applied_payload = json.loads(capsys.readouterr().out)
+    assert applied_payload["changed_files"] == ["docs/index.md"]
+    content = (repo / "docs" / "index.md").read_text()
+    assert "[Legacy Plan](docs/current.md)" in content
+    assert "docs/archive/legacy-plan.md as a historical note." in content
+
+
+def test_cli_fix_safe_skips_non_canonical_route_replacement(tmp_path, monkeypatch, capsys) -> None:
+    repo = make_repo(tmp_path)
+    write(
+        repo / "AGENTS.md",
+        "# AGENTS.md\n\n- Overview: docs/index.md\n- Missing: docs/missing.md\n",
+    )
+    write(
+        repo / "docs" / "archive" / "missing.md",
+        """---
+doc_id: archived-missing
+doc_type: archive
+domain: archive
+owner: kirby
+status: archived
+last_reviewed: 2026-03-08
+review_cycle_days: 30
+---
+
+# Missing
+""",
+    )
+    monkeypatch.chdir(repo)
+
+    assert main(["fix", "safe"]) == 0
+    preview_payload = json.loads(capsys.readouterr().out)
+
+    assert all(item["kind"] != "broken-route" for item in preview_payload["planned_changes"])
+
+
 def test_cli_scan_changed_scope_supports_explicit_files_and_validates_paths(
     tmp_path, monkeypatch, capsys
 ) -> None:

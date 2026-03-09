@@ -97,6 +97,7 @@ spec sections to PR-sized implementation units.
 - 2026-03-09: Narrowed the review-packet operator contract to review-ready docs and surfaced skipped docs with missing packet metadata directly in `review prepare` output and packet scope state.
 - 2026-03-09: Implemented S11 safe autofix expansion so `docgarden fix safe` now previews and applies deterministic metadata skeletons, unambiguous broken-link repairs, and index or AGENTS route replacements when the target is uniquely resolvable.
 - 2026-03-09: Kept S11 bounded to mechanical edits by requiring scanner-produced replacement details up front and leaving ambiguous links, multi-candidate route replacements, and prose-level truth changes outside the safe-fix path.
+- 2026-03-09: Tightened S11 after review so broken-route autofixes only target uniquely resolved current canonical docs, and route edits now apply only at exact routed reference instances instead of file-wide token rewrites.
 
 ## Discoveries
 
@@ -194,6 +195,9 @@ spec sections to PR-sized implementation units.
 - Metadata skeleton insertion needs obviously provisional values such as
   `owner: TODO` and `status: draft`; using factual-looking defaults for review
   dates or owners would make the docs appear more verified than they are.
+- Route autofix needs location-scoped edits for plain path references; a global
+  token substitution is deterministic but still unsafe because it can rewrite
+  truth-bearing prose that merely mentions the same path.
 
 ## Decision Log
 
@@ -258,6 +262,10 @@ spec sections to PR-sized implementation units.
 - 2026-03-09: Persist imported findings inside `findings.jsonl` with
   `finding_source: subjective_review` and provenance metadata so queue commands
   can act on them without letting future mechanical scans auto-resolve them.
+- 2026-03-09: Restrict S11 route autofixes to explicit routed reference
+  instances and current canonical replacements only, so `fix safe --apply`
+  cannot redirect AGENTS/index readers to archived material or rewrite prose
+  mentions opportunistically.
 - 2026-03-09: Model S11 autofix eligibility as finding-level deterministic
   details carried from scan time into preview and apply time, rather than
   letting the fixer infer replacements on its own from file contents.

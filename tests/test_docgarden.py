@@ -51,6 +51,17 @@ superseded_by:
 ---
 """
 
+REFERENCE_FRONTMATTER = """---
+doc_id: reference-doc
+doc_type: reference
+domain: docs
+owner: kirby
+status: verified
+last_reviewed: 2026-03-08
+review_cycle_days: 30
+---
+"""
+
 
 def write(path: Path, content: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -556,7 +567,13 @@ Text.
         self.assertTrue(stale_route.safe_to_autofix)
         self.assertEqual(
             stale_route.details["route_replacements"],
-            [{"from": "archive/legacy-plan.md", "to": "current.md"}],
+            [
+                {
+                    "kind": "markdown_link",
+                    "from": "archive/legacy-plan.md",
+                    "to": "current.md",
+                }
+            ],
         )
 
         changed = apply_safe_fixes(repo, [stale_route])
@@ -566,6 +583,116 @@ Text.
             "[Legacy Plan](current.md)",
             (repo / "docs" / "index.md").read_text(),
         )
+
+    def test_safe_fix_route_updates_preserve_matching_prose_mentions(self) -> None:
+        repo = self.make_repo()
+        write_docs_index(
+            repo,
+            extra_body=(
+                "\n- [Legacy Plan](docs/archive/legacy-plan.md)\n"
+                "\nThis historical note still references docs/archive/legacy-plan.md"
+                " for context.\n"
+            ),
+        )
+        write_archive_doc(
+            repo,
+            "docs/archive/legacy-plan.md",
+            doc_id="legacy-plan",
+            title="Legacy Plan",
+        )
+        write_canonical_doc(
+            repo,
+            "docs/current.md",
+            doc_id="current-doc",
+            title="Current Doc",
+        )
+
+        findings, _, _ = scan_repo(repo)
+        stale_route = next(item for item in findings if item.kind == "stale-route")
+
+        changed = apply_safe_fixes(repo, [stale_route])
+        content = (repo / "docs" / "index.md").read_text()
+
+        self.assertEqual(changed, ["docs/index.md"])
+        self.assertIn("[Legacy Plan](docs/current.md)", content)
+        self.assertIn(
+            "docs/archive/legacy-plan.md for context.",
+            content,
+        )
+
+    def test_safe_fix_updates_agents_route_line_with_canonical_replacement(self) -> None:
+        repo = self.make_repo()
+        write(
+            repo / "AGENTS.md",
+            "# AGENTS.md\n\n- Overview: docs/index.md\n- Current plan: docs/missing.md\n",
+        )
+        write_docs_index(repo)
+        write_canonical_doc(
+            repo,
+            "docs/current/missing.md",
+            doc_id="current-plan",
+            title="Current Plan",
+        )
+
+        findings, _, _ = scan_repo(repo)
+        broken_route = next(item for item in findings if item.kind == "broken-route")
+
+        self.assertTrue(broken_route.safe_to_autofix)
+        self.assertEqual(
+            broken_route.details["route_replacements"],
+            [
+                {
+                    "kind": "route_line",
+                    "from": "docs/missing.md",
+                    "to": "docs/current/missing.md",
+                    "line": "4",
+                    "before": "- Current plan: docs/missing.md\n",
+                    "after": "- Current plan: docs/current/missing.md\n",
+                }
+            ],
+        )
+
+        changed = apply_safe_fixes(repo, [broken_route])
+
+        self.assertEqual(changed, ["AGENTS.md"])
+        self.assertIn(
+            "- Current plan: docs/current/missing.md\n",
+            (repo / "AGENTS.md").read_text(),
+        )
+
+    def test_scan_does_not_autofix_broken_route_to_non_canonical_match(self) -> None:
+        cases = [
+            (
+                "archive",
+                ARCHIVE_FRONTMATTER.replace("archived-doc", "missing-archive")
+                .replace("docs/current.md", "docs/current.md")
+                + "\n# Missing Archive\n",
+                "docs/archive/missing.md",
+            ),
+            (
+                "reference",
+                REFERENCE_FRONTMATTER.replace("reference-doc", "missing-reference")
+                + "\n# Missing Reference\n",
+                "docs/reference/missing.md",
+            ),
+        ]
+
+        for label, content, rel_path in cases:
+            with self.subTest(label=label):
+                repo = self.make_repo()
+                write(
+                    repo / "AGENTS.md",
+                    "# AGENTS.md\n\n- Overview: docs/index.md\n- Missing: docs/missing.md\n",
+                )
+                write_docs_index(repo)
+                write(repo / rel_path, content)
+
+                findings, _, _ = scan_repo(repo)
+                broken_route = next(item for item in findings if item.kind == "broken-route")
+
+                self.assertFalse(broken_route.safe_to_autofix)
+                self.assertEqual(broken_route.details["replacement_target"], None)
+                self.assertEqual(broken_route.details["route_replacements"], [])
 
     def test_scan_skips_stale_route_without_canonical_replacement(self) -> None:
         repo = self.make_repo()

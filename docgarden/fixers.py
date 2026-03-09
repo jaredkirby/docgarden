@@ -8,9 +8,6 @@ from .markdown import replace_frontmatter, split_frontmatter
 from .models import Finding
 
 MARKDOWN_LINK_RE = re.compile(r"(\[[^\]]+\]\()([^)]+)(\))")
-ROUTE_TOKEN_RE = re.compile(
-    r"(?<![A-Za-z0-9_./-])(?P<path>(?:AGENTS\.md|docs/[A-Za-z0-9_./-]+(?:\.md)?))"
-)
 
 
 def preview_safe_fixes(repo_root: Path, findings: list[Finding]) -> list[dict[str, object]]:
@@ -108,16 +105,30 @@ def apply_safe_fixes(repo_root: Path, findings: list[Finding]) -> list[str]:
                 for replacement in replacements:
                     if not isinstance(replacement, dict):
                         continue
+                    replacement_kind = replacement.get("kind", "markdown_link")
                     original = replacement.get("from")
                     new_value = replacement.get("to")
                     if not isinstance(original, str) or not isinstance(new_value, str):
                         continue
+                    if replacement_kind == "route_line":
+                        before = replacement.get("before")
+                        after = replacement.get("after")
+                        line = replacement.get("line")
+                        if (
+                            not isinstance(before, str)
+                            or not isinstance(after, str)
+                            or not isinstance(line, str)
+                            or not line.isdigit()
+                        ):
+                            continue
+                        updated = _replace_exact_line(
+                            updated,
+                            line_number=int(line),
+                            before=before,
+                            after=after,
+                        )
+                        continue
                     updated = _replace_markdown_link_targets(
-                        updated,
-                        original=original,
-                        replacement=new_value,
-                    )
-                    updated = _replace_route_tokens(
                         updated,
                         original=original,
                         replacement=new_value,
@@ -176,10 +187,18 @@ def _replace_markdown_link_targets(text: str, *, original: str, replacement: str
     return MARKDOWN_LINK_RE.sub(_replace, text)
 
 
-def _replace_route_tokens(text: str, *, original: str, replacement: str) -> str:
-    def _replace(match: re.Match[str]) -> str:
-        if match.group("path") != original:
-            return match.group(0)
-        return replacement
-
-    return ROUTE_TOKEN_RE.sub(_replace, text)
+def _replace_exact_line(
+    text: str,
+    *,
+    line_number: int,
+    before: str,
+    after: str,
+) -> str:
+    lines = text.splitlines(keepends=True)
+    index = line_number - 1
+    if index < 0 or index >= len(lines):
+        return text
+    if lines[index] != before:
+        return text
+    lines[index] = after
+    return "".join(lines)

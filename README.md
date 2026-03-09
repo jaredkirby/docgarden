@@ -90,8 +90,9 @@ and appends subjective findings with provenance into `findings.jsonl`.
 
 `docgarden fix safe` previews the exact low-risk edits it would make. Adding
 `--apply` limits mutations to deterministic repairs such as stale-status
-updates, missing required headings, metadata skeleton insertion, and
-unambiguous internal link or current-truth route replacements.
+updates, missing required headings, metadata skeleton insertion, unambiguous
+internal link repairs, and exact current-truth route replacements to uniquely
+resolved current canonical docs.
 
 Clean review passes are valid imports too. A no-findings payload can look like:
 
@@ -310,7 +311,8 @@ The repo currently includes:
 - manual queue focus, resolve, and reopen commands
 - read-only changed-scope scans for partial local or CI feedback
 - deterministic safe autofix previews plus low-risk apply support for metadata,
-  headings, stale status, and unambiguous link or route repairs
+  headings, stale status, unambiguous link repairs, and exact route-reference
+  repairs to current canonical docs
 - automated slice kickoff and review prompt generation from the slice backlog
 - a Codex worker/reviewer loop that can continue until a slice is accepted or
   blocked

@@ -2,11 +2,11 @@ from __future__ import annotations
 
 from collections import Counter, defaultdict
 from pathlib import Path
+import re
 
-from .markdown import Document, resolve_link_target
+from .markdown import Document, ROUTE_RE, resolve_link_target
 from .models import Finding, FindingContext
 from .scan_alignment import (
-    deterministic_repo_target_replacement,
     format_reference_for_source,
     stable_suffix,
 )
@@ -136,7 +136,10 @@ def broken_route_findings(
 
         source = sorted(referrers)[0]
         source_document = documents_by_rel_path.get(source)
-        replacement_target = deterministic_repo_target_replacement(repo_root, target)
+        replacement_target = deterministic_current_truth_route_replacement(
+            target,
+            documents_by_rel_path=documents_by_rel_path,
+        )
         route_replacements = (
             route_reference_replacements(
                 source_document,
@@ -211,6 +214,39 @@ def canonical_route_replacements(
             continue
         replacements.append(replacement.rel_path)
     return sorted(set(replacements))
+
+
+def is_current_canonical_doc(document: Document) -> bool:
+    if not document.frontmatter:
+        return False
+    if document.frontmatter.get("doc_type") != "canonical":
+        return False
+    return document.frontmatter.get("status") not in {
+        "stale",
+        "deprecated",
+        "archived",
+    }
+
+
+def deterministic_current_truth_route_replacement(
+    missing_target: str,
+    *,
+    documents_by_rel_path: dict[str, Document],
+) -> str | None:
+    file_name = Path(missing_target).name
+    if not file_name:
+        return None
+    matches = sorted(
+        {
+            document.rel_path
+            for document in documents_by_rel_path.values()
+            if Path(document.rel_path).name == file_name
+            and is_current_canonical_doc(document)
+        }
+    )
+    if len(matches) != 1:
+        return None
+    return matches[0]
 
 
 def route_quality_findings(
@@ -371,6 +407,7 @@ def route_reference_replacements(
             continue
         replacements.append(
             {
+                "kind": "markdown_link",
                 "from": link,
                 "to": format_reference_for_source(
                     document.path,
@@ -381,17 +418,65 @@ def route_reference_replacements(
             }
         )
 
-    for routed_path in document.routed_paths:
-        if routed_path != target_rel_path:
-            continue
-        replacements.append({"from": routed_path, "to": replacement_rel_path})
+    replacements.extend(
+        route_line_replacements(
+            document,
+            target_rel_path=target_rel_path,
+            replacement_rel_path=replacement_rel_path,
+        )
+    )
 
     deduped: list[dict[str, str]] = []
-    seen: set[tuple[str, str]] = set()
+    seen: set[tuple[object, ...]] = set()
     for item in replacements:
-        key = (item["from"], item["to"])
+        key = tuple(sorted(item.items()))
         if key in seen:
             continue
         seen.add(key)
         deduped.append(item)
     return deduped
+
+
+ROUTE_LIST_ITEM_RE = re.compile(r"^\s*(?:[-*]|\d+\.)\s+")
+
+
+def route_line_replacements(
+    document: Document,
+    *,
+    target_rel_path: str,
+    replacement_rel_path: str,
+) -> list[dict[str, str]]:
+    if document.rel_path != "AGENTS.md":
+        return []
+
+    replacements: list[dict[str, str]] = []
+    for line_number, line in enumerate(document.raw_text.splitlines(keepends=True), start=1):
+        if "](" in line or not ROUTE_LIST_ITEM_RE.match(line):
+            continue
+        updated_line = _replace_route_token_in_line(
+            line,
+            original=target_rel_path,
+            replacement=replacement_rel_path,
+        )
+        if updated_line == line:
+            continue
+        replacements.append(
+            {
+                "kind": "route_line",
+                "from": target_rel_path,
+                "to": replacement_rel_path,
+                "line": str(line_number),
+                "before": line,
+                "after": updated_line,
+            }
+        )
+    return replacements
+
+
+def _replace_route_token_in_line(line: str, *, original: str, replacement: str) -> str:
+    def _replace(match: re.Match[str]) -> str:
+        if match.group("path") != original:
+            return match.group(0)
+        return replacement
+
+    return ROUTE_RE.sub(_replace, line)
