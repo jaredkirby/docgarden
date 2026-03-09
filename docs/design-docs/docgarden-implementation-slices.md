@@ -71,7 +71,7 @@ criteria rather than re-explaining the whole product vision.
 | S04 | completed | Focus and resolve queue operations | S02, S03 |
 | S05 | completed | Changed-scope scans | S00 |
 | S06 | completed | Generated-doc contract checks | S00 |
-| S07 | queued | Workflow drift detector | S01 |
+| S07 | completed | Workflow drift detector | S01 |
 | S08 | queued | Routing quality detector for stale targets | S01 |
 | S09 | queued | Score trend and weighted domain rollups | S02 |
 | S10 | queued | Review packet preparation and import | S02, S03 |
@@ -101,6 +101,9 @@ The repo has also completed the first six generic Phase 2 slices:
   limitations explicitly
 - generated-doc contract checks that enforce populated provenance details,
   runnable regeneration commands, and freshness against local upstream files
+- workflow drift checks that scan workflow-style sections for missing
+  repo-owned local asset references while ignoring external references and
+  keeping false positives low on design-doc planning content
 
 ## Atomic slices
 
@@ -264,7 +267,7 @@ Acceptance:
 
 ### S07: Workflow drift detector
 
-Status: `queued`
+Status: `completed`
 
 Goal:
 - Catch docs that instruct contributors to use scripts, commands, or paths that

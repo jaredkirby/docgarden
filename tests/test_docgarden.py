@@ -345,6 +345,147 @@ Text.
 
         self.assertEqual([item.kind for item in findings], ["invalid-validation-command"])
 
+    def test_scan_flags_missing_workflow_asset_reference(self) -> None:
+        repo = self.make_repo()
+        write(
+            repo / "docs" / "index.md",
+            CANONICAL_FRONTMATTER
+            + """
+# Docs Index
+
+## Purpose
+Text.
+
+## Scope
+Text.
+
+## Source of Truth
+Text.
+
+## Rules / Definitions
+Text.
+
+## Exceptions / Caveats
+Text.
+
+## Validation / How to verify
+
+- Run `scripts/check.sh`
+- See [workflow helper](scripts/check.sh)
+
+## Related docs
+Text.
+""",
+        )
+
+        findings, _, _ = scan_repo(repo)
+
+        self.assertIn("missing-workflow-asset", [item.kind for item in findings])
+        workflow_finding = next(item for item in findings if item.kind == "missing-workflow-asset")
+        self.assertEqual(
+            workflow_finding.id,
+            "missing-workflow-asset::docs::index.md::"
+            "asset-scripts-check-sh-d2dded7b17",
+        )
+        self.assertEqual(
+            workflow_finding.evidence,
+            [
+                "Workflow section: validation how to verify",
+                "Missing asset reference: scripts/check.sh",
+                "Resolved local path: scripts/check.sh",
+            ],
+        )
+
+    def test_scan_ignores_external_workflow_references(self) -> None:
+        repo = self.make_repo()
+        write(
+            repo / "docs" / "index.md",
+            CANONICAL_FRONTMATTER
+            + """
+# Docs Index
+
+## Purpose
+Text.
+
+## Scope
+Text.
+
+## Source of Truth
+Text.
+
+## Rules / Definitions
+Text.
+
+## Exceptions / Caveats
+Text.
+
+## Validation / How to verify
+
+- `curl https://example.com/install.sh`
+- `python -m pytest`
+- `.venv/bin/desloppify scan --path .`
+- `python -m docgarden.cli scan`
+- [Hosted guide](https://example.com/runbook)
+
+## Related docs
+Text.
+""",
+        )
+
+        findings, _, _ = scan_repo(repo)
+
+        self.assertEqual(findings, [])
+
+    def test_scan_keeps_false_positives_low_for_design_doc_references(self) -> None:
+        repo = self.make_repo()
+        write_docs_index(repo)
+        write(
+            repo / "docs" / "design-docs" / "plan.md",
+            CANONICAL_FRONTMATTER.replace("doc_id: docs-index", "doc_id: design-plan")
+            + """
+# Design Plan
+
+## Purpose
+Text.
+
+## Scope
+Text.
+
+## Source of Truth
+Text.
+
+## Rules / Definitions
+Text.
+
+## Exceptions / Caveats
+Text.
+
+## Validation / How to verify
+
+- `uv run pytest`
+
+## Related docs
+Text.
+
+## Atomic slices
+
+- Files likely touched:
+  - `scripts/missing.sh`
+""",
+        )
+
+        findings, _, _ = scan_repo(repo)
+
+        self.assertEqual(
+            [
+                item.kind
+                for item in findings
+                if item.files == ["docs/design-docs/plan.md"]
+                and item.kind == "missing-workflow-asset"
+            ],
+            [],
+        )
+
     def test_scan_skips_alignment_checks_for_draft_docs(self) -> None:
         repo = self.make_repo()
         write(

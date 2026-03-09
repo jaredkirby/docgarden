@@ -138,6 +138,8 @@ The repo currently includes:
 - broken route and internal markdown link checks
 - source-of-truth artifact alignment checks
 - unsupported `docgarden` validation command checks on non-draft docs
+- workflow drift checks for missing repo-owned local assets in workflow-style
+  sections
 - quality scoring and score publication
 - append-only findings history and a prioritized plan view
 - plan triage stages with persisted notes
@@ -147,5 +149,5 @@ The repo currently includes:
 - a Codex worker/reviewer loop that can continue until a slice is accepted or
   blocked
 
-Next planned slice: workflow drift detection for repo-owned scripts, commands,
-and local path references documented in operator-facing docs.
+Next planned slice: routing quality detection for stale or low-signal targets
+from AGENTS/index routes.

@@ -8,17 +8,22 @@ from datetime import datetime
 from pathlib import Path
 from urllib.parse import unquote, urlparse
 
-from .markdown import Document, normalize_heading
+from .markdown import (
+    Document,
+    extract_markdown_links,
+    extract_sections,
+    normalize_heading,
+    section_content_map,
+)
 from .models import Finding, FindingContext
 from .scan_document_rules import (
+    document_context,
     generated_doc_contract_finding,
     generated_doc_stale_finding,
 )
 
-SECTION_HEADING_RE = re.compile(r"^(#{1,6})\s+(.+?)\s*$", re.MULTILINE)
 INLINE_CODE_RE = re.compile(r"`([^`\n]+)`")
 FENCED_BLOCK_RE = re.compile(r"```(?:bash|sh|shell)?\n(.*?)```", re.DOTALL)
-MARKDOWN_LINK_RE = re.compile(r"\[[^\]]+\]\(([^)]+)\)")
 URI_SCHEME_RE = re.compile(r"^[A-Za-z][A-Za-z0-9+.-]*:")
 WINDOWS_DRIVE_RE = re.compile(r"^[A-Za-z]:[\\\\/]")
 ROOT_LOCAL_ARTIFACT_NAMES = {
@@ -35,6 +40,27 @@ GENERATED_SOURCE_HEADING = normalize_heading("Generation source")
 GENERATED_TIMESTAMP_HEADING = normalize_heading("Generated timestamp")
 GENERATED_UPSTREAM_HEADING = normalize_heading("Upstream artifact path or script")
 GENERATED_COMMAND_HEADING = normalize_heading("Regeneration command")
+WORKFLOW_SECTION_PREFIXES = (
+    "validation",
+    "how to verify",
+    "workflow",
+    "commands",
+    "usage",
+    "how to use",
+    "steps",
+    "prerequisite",
+    "setup",
+    "runbook",
+)
+HIDDEN_NON_REPO_WORKFLOW_ROOTS = {
+    ".docgarden",
+    ".git",
+    ".pytest_cache",
+    ".ruff_cache",
+    ".venv",
+    "__pycache__",
+}
+WORKFLOW_PLACEHOLDER_MARKERS = ("...", "<", ">", "{", "}", "$(", "${", "*")
 
 
 @dataclass(slots=True)
@@ -57,11 +83,8 @@ def alignment_findings(
     repo_root: Path,
     discovered_at: str,
 ) -> list[Finding]:
-    if not document.frontmatter:
-        return []
-
     findings: list[Finding] = []
-    if document.frontmatter.get("status") != "draft":
+    if document.frontmatter and document.frontmatter.get("status") != "draft":
         findings.extend(
             missing_source_of_truth_findings(
                 document,
@@ -77,6 +100,13 @@ def alignment_findings(
         )
     findings.extend(
         generated_doc_findings(
+            document,
+            repo_root=repo_root,
+            discovered_at=discovered_at,
+        )
+    )
+    findings.extend(
+        workflow_asset_findings(
             document,
             repo_root=repo_root,
             discovered_at=discovered_at,
@@ -238,28 +268,6 @@ def extract_validation_commands(body: str) -> list[str]:
     return sorted(set(commands))
 
 
-def extract_sections(body: str) -> list[tuple[str, int, str]]:
-    matches = list(SECTION_HEADING_RE.finditer(body))
-    sections: list[tuple[str, int, str]] = []
-    for index, match in enumerate(matches):
-        depth = len(match.group(1))
-        start = match.end()
-        end = len(body)
-        for next_match in matches[index + 1 :]:
-            next_depth = len(next_match.group(1))
-            if next_depth <= depth:
-                end = next_match.start()
-                break
-        sections.append(
-            (normalize_heading(match.group(2)), depth, body[start:end].strip())
-        )
-    return sections
-
-
-def section_content_map(body: str) -> dict[str, str]:
-    return {heading: content for heading, _, content in extract_sections(body)}
-
-
 def inspect_generated_doc_contract(
     document: Document,
     *,
@@ -344,7 +352,7 @@ def extract_section_value(text: str) -> str | None:
         if normalized:
             return normalized
 
-    for target in MARKDOWN_LINK_RE.findall(text):
+    for target in extract_markdown_links(text):
         normalized = target.split("#", 1)[0].strip()
         if normalized:
             return normalized
@@ -454,3 +462,115 @@ def tokenize_command(command: str) -> list[str]:
         return shlex.split(command)
     except ValueError:
         return []
+
+
+def workflow_asset_findings(
+    document: Document,
+    *,
+    repo_root: Path,
+    discovered_at: str,
+) -> list[Finding]:
+    references: dict[str, tuple[str, Path]] = {}
+    for heading, _, content in extract_sections(document.body):
+        if not is_workflow_section(heading):
+            continue
+        for raw_reference in extract_workflow_asset_references(content):
+            target = resolve_repo_artifact(repo_root, raw_reference)
+            if target is None or target.exists():
+                continue
+            if should_ignore_workflow_asset(target, repo_root=repo_root):
+                continue
+            references.setdefault(raw_reference, (heading, target))
+
+    if not references:
+        return []
+
+    context = document_context(document, discovered_at=discovered_at)
+    findings: list[Finding] = []
+    for raw_reference, (heading, target) in sorted(references.items()):
+        findings.append(
+            Finding.open_issue(
+                context,
+                kind="missing-workflow-asset",
+                severity="medium",
+                summary=f"{document.rel_path} references a missing workflow asset.",
+                evidence=[
+                    f"Workflow section: {heading}",
+                    f"Missing asset reference: {raw_reference}",
+                    f"Resolved local path: {target.relative_to(repo_root)}",
+                ],
+                recommended_action=(
+                    "Update the workflow reference to an existing repo-owned script or path, "
+                    "or remove the stale instruction."
+                ),
+                safe_to_autofix=False,
+                cluster="workflow-drift",
+                suffix=stable_suffix("asset", raw_reference),
+            )
+        )
+    return findings
+
+
+def is_workflow_section(heading: str) -> bool:
+    return any(
+        heading == prefix or heading.startswith(f"{prefix} ")
+        for prefix in WORKFLOW_SECTION_PREFIXES
+    )
+
+
+def extract_workflow_asset_references(text: str) -> list[str]:
+    references: list[str] = []
+    for link in extract_markdown_links(text):
+        normalized = normalize_workflow_reference(link)
+        if normalized is not None:
+            references.append(normalized)
+
+    for snippet in INLINE_CODE_RE.findall(text):
+        references.extend(extract_asset_candidates_from_command(snippet))
+
+    for block in FENCED_BLOCK_RE.findall(text):
+        for raw_line in block.splitlines():
+            line = raw_line.strip()
+            if not line or line.startswith("#"):
+                continue
+            references.extend(extract_asset_candidates_from_command(line))
+
+    return sorted(set(references))
+
+
+def extract_asset_candidates_from_command(command: str) -> list[str]:
+    normalized = normalize_workflow_reference(command)
+    references: list[str] = []
+    if normalized is not None:
+        references.append(normalized)
+
+    for token in tokenize_command(command):
+        normalized_token = normalize_workflow_reference(token)
+        if normalized_token is not None:
+            references.append(normalized_token)
+    return references
+
+
+def normalize_workflow_reference(value: str) -> str | None:
+    candidate = value.strip().strip("()[]{}:,;\"'")
+    if not candidate:
+        return None
+    if any(marker in candidate for marker in WORKFLOW_PLACEHOLDER_MARKERS):
+        return None
+    if is_non_local_reference(candidate):
+        return None
+    if "." in candidate and "/" not in candidate and "\\" not in candidate:
+        if candidate not in ROOT_LOCAL_ARTIFACT_NAMES and not candidate.startswith("."):
+            return None
+    if resolve_repo_artifact(Path("."), candidate) is None:
+        return None
+    return candidate.split("#", 1)[0]
+
+
+def should_ignore_workflow_asset(path: Path, *, repo_root: Path) -> bool:
+    try:
+        rel_path = path.relative_to(repo_root)
+    except ValueError:
+        rel_path = path
+    root_name = rel_path.parts[0] if rel_path.parts else rel_path.name
+    return root_name in HIDDEN_NON_REPO_WORKFLOW_ROOTS

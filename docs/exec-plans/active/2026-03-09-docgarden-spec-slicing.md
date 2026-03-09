@@ -82,6 +82,8 @@ spec sections to PR-sized implementation units.
 - 2026-03-09: Tightened S06 after review so non-HTTP URI schemes such as `s3://` and `gs://` now degrade gracefully instead of being misclassified as missing local files.
 - 2026-03-09: Tightened the generated-doc contract so regeneration commands must look runnable, and generated timestamps must be offset-aware ISO-8601 values before freshness comparisons run.
 - 2026-03-09: Updated the durable slice backlog and README so they now reflect S06 as completed and point the next handoff at S07 workflow drift detection.
+- 2026-03-09: Implemented S07 workflow drift detection by reusing shared markdown section/link helpers, scanning only workflow-like sections, and emitting actionable `missing-workflow-asset` findings for missing repo-owned local references.
+- 2026-03-09: Added regression coverage for the S07 detector so missing local workflow assets are caught while external URLs, virtualenv command examples, Python module invocations, and design-doc planning references stay quiet.
 
 ## Discoveries
 
@@ -118,6 +120,14 @@ spec sections to PR-sized implementation units.
 - CI-oriented changed-file inputs do not need a separate file-of-paths format
   yet; a direct `--files` list is enough for this slice and keeps the product
   surface small.
+- Workflow drift needs narrower heuristics than generic broken-link detection:
+  local asset references should be read from workflow-style sections and
+  command/link snippets, not from planning prose such as "files likely
+  touched" lists in design docs.
+- Historical exec plans still contain useful shell examples like
+  `.venv/bin/...` and `python -m docgarden.cli ...`, so the detector has to
+  recognize virtualenv paths and Python module syntax as execution context, not
+  missing repo-owned assets.
 - "Read-only partial scan" needs to be interpreted literally: even creating the
   state-directory skeleton is a surprising side effect when no durable state is
   supposed to change.

@@ -60,11 +60,37 @@ def normalize_heading(value: str) -> str:
     return re.sub(r"\s+", " ", normalized)
 
 
+def extract_markdown_links(text: str) -> list[str]:
+    return [match.group(1).strip() for match in MARKDOWN_LINK_RE.finditer(text)]
+
+
+def extract_sections(body: str) -> list[tuple[str, int, str]]:
+    matches = list(HEADING_RE.finditer(body))
+    sections: list[tuple[str, int, str]] = []
+    for index, match in enumerate(matches):
+        depth = len(match.group(1))
+        start = match.end()
+        end = len(body)
+        for next_match in matches[index + 1 :]:
+            next_depth = len(next_match.group(1))
+            if next_depth <= depth:
+                end = next_match.start()
+                break
+        sections.append(
+            (normalize_heading(match.group(2)), depth, body[start:end].strip())
+        )
+    return sections
+
+
+def section_content_map(body: str) -> dict[str, str]:
+    return {heading: content for heading, _, content in extract_sections(body)}
+
+
 def parse_document(path: Path, repo_root: Path) -> Document:
     raw_text = path.read_text()
     frontmatter, body = split_frontmatter(raw_text)
     headings = [match.group(2).strip() for match in HEADING_RE.finditer(body)]
-    links = [match.group(1).strip() for match in MARKDOWN_LINK_RE.finditer(raw_text)]
+    links = extract_markdown_links(raw_text)
     routed_paths = []
     for match in ROUTE_RE.finditer(raw_text):
         candidate = match.group("path").rstrip(".,)")
