@@ -50,13 +50,13 @@ implementation work from spec-conformance review work.
 - `completed slice review`: a review pass against a slice that is already
   believed to be shipped.
 - `next agent`: the implementation agent starting the next queued slice after
-  S04.
+  S05.
 
 ## Prompt pack
 
-### 1. Implementation kickoff for the next agent after S04
+### 1. Implementation kickoff for the next agent after S05
 
-Use this when S01, S02, S03, and S04 have already been completed, reviewed, and
+Use this when S01 through S05 have already been completed, reviewed, and
 accepted as the current baseline.
 
 ```text
@@ -67,31 +67,27 @@ Start by reading:
 - docs/design-docs/docgarden-spec.md
 - docs/exec-plans/active/2026-03-09-docgarden-spec-slicing.md
 
-Your target slice is S05: “Changed-scope scans”.
+Your target slice is S06: “Generated-doc contract checks”.
 
 Primary goal:
-- support faster local and CI feedback by scanning only changed files when that
-  is safe
+- enforce the generated-doc rules from the spec instead of only documenting
+  them
 
 Required changes:
-1. Add `docgarden scan --scope changed`.
-2. Determine changed docs from local git state or a provided file list.
-3. Keep full-scan behavior unchanged.
-4. Make partial-scan output explicit about what was and was not recomputed.
-5. Preserve honest score semantics even if partial scans cannot fully recompute
-   every view.
+1. Validate the required generated-doc contract for `doc_type: generated`.
+2. Verify regeneration command presence.
+3. Compare generated-doc freshness against local upstream artifact or script
+   mtime when the source path is local.
+4. Degrade gracefully for non-local or non-file sources instead of emitting
+   misleading freshness failures.
 
 Likely files:
-- docgarden/cli.py
-- docgarden/cli_commands.py
-- docgarden/scanner.py
-- docgarden/quality.py
-- tests/test_cli.py
+- docgarden/scan_document_rules.py
+- docgarden/scan_alignment.py
 - tests/test_docgarden.py
 
 Working style:
-- keep this slice tight; do not jump ahead into S06 generated-doc contract
-  checks
+- keep this slice tight; do not jump ahead into S07 workflow drift detection
 - do not revert unrelated user changes
 - if the current worktree contains unrelated dirty files, work around them
   carefully and commit only your touched paths
@@ -105,9 +101,9 @@ Documentation:
   discoveries, and decision log
 
 Definition of done:
-- changed-scope scan inspects only the intended subset
-- full scan behavior remains unchanged
-- partial-scan output clearly explains score or coverage limitations
+- generated docs missing provenance metadata receive findings
+- local upstream artifact timestamps can mark generated docs stale
+- non-local or non-file sources degrade gracefully
 - tests cover success paths and validation failures
 - repo scan remains clean after the change
 
@@ -319,9 +315,10 @@ Do not require changed-scope scanning or review-packet behavior unless their
 absence prevents S04 from being useful on its own.
 ```
 
-### 6. PM review prompt for the next agent’s work against S05
+### 6. PM review prompt for the completed S05 work
 
-Use this after the next implementation agent finishes S05.
+Use this when you want a product/spec review of the shipped changed-scope scan
+slice.
 
 ```text
 Act as a PM-style reviewer for the docgarden spec implementation in
@@ -365,6 +362,55 @@ Deliverable:
 
 Do not require generated-doc or workflow-drift behavior unless their absence
 prevents S05 from being useful on its own.
+```
+
+### 7. PM review prompt for the next agent’s work against S06
+
+Use this after the next implementation agent finishes S06.
+
+```text
+Act as a PM-style reviewer for the docgarden spec implementation in
+/Users/kirby/Projects/docgarden.
+
+You are reviewing the implementation of S06: “Generated-doc contract checks”.
+
+Read first:
+- docs/design-docs/docgarden-spec.md
+- docs/design-docs/docgarden-implementation-slices.md
+- docs/exec-plans/active/2026-03-09-docgarden-spec-slicing.md
+
+Review the implementation specifically against the S06 slice definition.
+
+Questions to answer:
+1. Do generated docs now receive specific, actionable findings when provenance
+   metadata is missing or incomplete?
+2. Does the implementation correctly check for regeneration command presence
+   without overfitting to one repo workflow?
+3. When the upstream artifact path is local, does freshness comparison behave
+   predictably and honestly?
+4. When the source is non-local, symbolic, or otherwise not safely stat-able,
+   does the tool degrade gracefully instead of claiming false freshness
+   precision?
+5. Did the implementation stay within S06, or did it sprawl into workflow-drift
+   detection, routing quality, or CI policy?
+6. Are the findings and recommended actions clear enough for an agent to repair
+   generated-doc issues without reading the whole spec?
+
+Deliverable:
+- findings first, ordered by severity
+- classify each issue as:
+  - spec mismatch
+  - product ambiguity
+  - implementation risk
+  - testing/documentation gap
+- explicitly call out any hidden product decisions not stated in the slice
+- end with a short recommendation:
+  - ready for S07
+  - revise before S07
+  - blocked pending product clarification
+
+Do not require workflow-drift or routing-quality behavior unless their absence
+prevents S06 from being useful on its own.
 ```
 
 ## Exceptions / Caveats

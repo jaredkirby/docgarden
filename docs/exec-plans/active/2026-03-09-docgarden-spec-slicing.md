@@ -75,6 +75,7 @@ spec sections to PR-sized implementation units.
 - 2026-03-09: Added tests covering git-derived changed scans, explicit file-list scans, subset-only detector execution, validation failures for non-doc paths, and read-only partial-scan behavior against persisted `.docgarden` state.
 - 2026-03-09: Tightened S05 after review so changed-scope scans do not even create `.docgarden/` on first use, and explicit `--files` inputs now fail fast on missing doc-shaped paths instead of inferring deletions.
 - 2026-03-09: Documented the git-derived changed-set rule in CLI help, scan output notes, and the README so operators can predict which files `--scope changed` will inspect.
+- 2026-03-09: Re-synced the durable prompt pack after S05 landed, promoted the next implementation kickoff to S06, and refreshed the README so the public command overview matches the current queue and scan workflow.
 
 ## Discoveries
 
@@ -117,6 +118,9 @@ spec sections to PR-sized implementation units.
 - Explicit file lists are more predictable when they mean "existing files to
   scan now" only; deletions should stay a git-derived concern unless the CLI
   grows a separate explicit deleted-path input.
+- The README is more useful when it explains both the full-scan source-of-truth
+  loop and the narrower changed-scope preview loop; otherwise operators can
+  infer the wrong authority from partial-scan commands.
 
 ## Decision Log
 
