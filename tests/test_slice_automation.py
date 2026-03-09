@@ -14,6 +14,10 @@ def write(path: Path, content: str) -> None:
     path.write_text(content, encoding="utf-8")
 
 
+def write_json(path: Path, payload) -> None:
+    write(path, json.dumps(payload, indent=2, sort_keys=True) + "\n")
+
+
 class FakePopen:
     _next_pid = 1000
 
@@ -704,3 +708,98 @@ def test_cli_slices_run_rejects_mixed_timeout_flags(
     )
     captured = capsys.readouterr()
     assert "Use either `--agent-timeout-seconds` or the per-role timeout flags" in captured.err
+
+
+def test_cli_slices_watch_prints_latest_run_summary(tmp_path, monkeypatch, capsys) -> None:
+    repo = make_slice_repo(tmp_path)
+    run_dir = repo / ".docgarden" / "slice-loops" / "2026-03-09T101500-s10"
+    write_json(
+        run_dir / "run-status.json",
+        {
+            "slice_id": "S10",
+            "status": "running",
+            "current_phase": "worker",
+            "elapsed_seconds": 12.5,
+        },
+    )
+    monkeypatch.chdir(repo)
+
+    assert main(["slices", "watch", "--max-updates", "1"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["run_dir"] == str(run_dir)
+    assert payload["status"]["slice_id"] == "S10"
+    assert payload["status"]["elapsed_seconds"] == 12.5
+
+
+def test_cli_slices_stop_marks_run_stopped(tmp_path, monkeypatch, capsys) -> None:
+    repo = make_slice_repo(tmp_path)
+    run_dir = repo / ".docgarden" / "slice-loops" / "2026-03-09T101501-s10"
+    write_json(
+        run_dir / "run-status.json",
+        {
+            "slice_id": "S10",
+            "status": "running",
+            "current_phase": "worker",
+            "agent_pid": 4242,
+            "last_heartbeat_at": "2026-03-09T10:15:01",
+        },
+    )
+    monkeypatch.chdir(repo)
+    killed: list[tuple[int, int]] = []
+
+    def fake_kill(pid: int, sig: int) -> None:
+        killed.append((pid, sig))
+
+    monkeypatch.setattr("docgarden.slices.runner.os.kill", fake_kill)
+
+    assert main(["slices", "stop"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["status"]["status"] == "stopped"
+    assert payload["status"]["stop_note"] == "Sent SIGTERM to pid 4242."
+    assert killed == [(4242, 15)]
+
+
+def test_cli_slices_recover_runs_verification_and_reports_partial_changes(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    repo = make_slice_repo(tmp_path)
+    run_dir = repo / ".docgarden" / "slice-loops" / "2026-03-09T101502-s10"
+    write_json(
+        run_dir / "run-status.json",
+        {
+            "slice_id": "S10",
+            "status": "failed",
+            "current_phase": "worker",
+            "error": "worker timed out",
+        },
+    )
+    monkeypatch.chdir(repo)
+    monkeypatch.setattr(
+        "docgarden.slices.runner._git_diff_name_only",
+        lambda repo_root: ["docgarden/state.py"],
+    )
+    monkeypatch.setattr(
+        "docgarden.slices.runner._git_untracked_paths",
+        lambda repo_root: [".docgarden/slice-loops/"],
+    )
+
+    def fake_run(cmd, cwd, text, capture_output, check):
+        if cmd == ["uv", "run", "pytest"]:
+            return subprocess.CompletedProcess(cmd, 0, "pytest ok\n", "")
+        if cmd == ["uv", "run", "docgarden", "scan"]:
+            return subprocess.CompletedProcess(
+                cmd,
+                0,
+                json.dumps({"findings": 0, "overall_score": 100}),
+                "",
+            )
+        raise AssertionError(f"Unexpected command: {cmd}")
+
+    monkeypatch.setattr("docgarden.slices.runner.subprocess.run", fake_run)
+
+    assert main(["slices", "recover"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["recovery_recommendation"] == "partial_repo_changes_need_review"
+    assert payload["tracked_changes"] == ["docgarden/state.py"]
+    assert payload["verification"]["pytest"]["returncode"] == 0
+    assert payload["verification"]["scan"]["returncode"] == 0

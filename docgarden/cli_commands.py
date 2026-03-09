@@ -5,6 +5,7 @@ from dataclasses import asdict
 from datetime import datetime
 import json
 import os
+import time
 import sys
 from pathlib import Path
 
@@ -20,7 +21,11 @@ from .slices import (
     build_implementation_prompt,
     build_review_prompt,
     build_slice_paths,
+    recover_slice_run,
+    resolve_slice_run_dir,
     load_slice_catalog,
+    stop_slice_run,
+    summarize_slice_run,
     run_slice_loop,
 )
 from .state import (
@@ -345,6 +350,58 @@ def command_slices_review_prompt(args: argparse.Namespace) -> None:
         ),
         end="",
     )
+
+
+def command_slices_watch(args: argparse.Namespace) -> int:
+    repo_root = Path.cwd()
+    paths = _slice_paths_from_args(repo_root, args)
+    if args.max_updates < 0:
+        raise DocgardenError("`docgarden slices watch --max-updates` must be 0 or greater.")
+    if args.interval_seconds <= 0:
+        raise DocgardenError(
+            "`docgarden slices watch --interval-seconds` must be greater than 0."
+        )
+    run_dir = resolve_slice_run_dir(paths.artifacts_dir, run_dir=args.run_dir)
+    updates = 0
+    while True:
+        summary = summarize_slice_run(run_dir)
+        print(json.dumps(summary, indent=2, sort_keys=True))
+        updates += 1
+        status = summary["status"].get("status")
+        if status != "running":
+            return 0
+        if args.max_updates and updates >= args.max_updates:
+            return 0
+        time.sleep(args.interval_seconds)
+
+
+def command_slices_stop(args: argparse.Namespace) -> int:
+    repo_root = Path.cwd()
+    paths = _slice_paths_from_args(repo_root, args)
+    run_dir = resolve_slice_run_dir(paths.artifacts_dir, run_dir=args.run_dir)
+    summary = stop_slice_run(run_dir)
+    print(json.dumps(summary, indent=2, sort_keys=True))
+    return 0
+
+
+def command_slices_recover(args: argparse.Namespace) -> int:
+    repo_root = Path.cwd()
+    paths = _slice_paths_from_args(repo_root, args)
+    run_dir = resolve_slice_run_dir(paths.artifacts_dir, run_dir=args.run_dir)
+    recovery = recover_slice_run(
+        repo_root,
+        run_dir,
+        verify=not args.skip_verification,
+    )
+    print(json.dumps(recovery, indent=2, sort_keys=True))
+    if args.skip_verification:
+        return 0
+    verification = recovery.get("verification", {})
+    pytest_result = verification.get("pytest", {})
+    scan_result = verification.get("scan", {})
+    if pytest_result.get("returncode", 0) != 0 or scan_result.get("returncode", 0) != 0:
+        return 1
+    return 0
 
 
 def command_slices_run(args: argparse.Namespace) -> int:

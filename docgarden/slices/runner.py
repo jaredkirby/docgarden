@@ -4,6 +4,7 @@ from dataclasses import asdict, dataclass, field
 from datetime import datetime
 import json
 import os
+import signal
 import subprocess
 from pathlib import Path
 import sys
@@ -43,6 +44,7 @@ DEFAULT_CODEX_EXEC_ARGS = (
 DEFAULT_WORKER_TIMEOUT_SECONDS = 900
 DEFAULT_REVIEWER_TIMEOUT_SECONDS = 300
 RUN_STATUS_HEARTBEAT_SECONDS = 5.0
+RUN_ACTIVE_STATUSES = frozenset({"running"})
 
 
 @dataclass(slots=True)
@@ -528,6 +530,172 @@ def _iso_now() -> str:
 
 def _elapsed_seconds(started_monotonic: float) -> float:
     return round(time.monotonic() - started_monotonic, 1)
+
+
+def resolve_slice_run_dir(
+    artifacts_dir: Path,
+    *,
+    run_dir: str | Path | None = None,
+) -> Path:
+    if run_dir is not None:
+        candidate = Path(run_dir)
+        if not candidate.is_absolute():
+            candidate = candidate if candidate.exists() else artifacts_dir / candidate
+        if not candidate.exists() or not candidate.is_dir():
+            raise DocgardenError(f"Slice run directory not found: {candidate}")
+        return candidate
+
+    run_dirs = sorted(path for path in artifacts_dir.iterdir() if path.is_dir())
+    if not run_dirs:
+        raise DocgardenError(f"No slice runs found in {artifacts_dir}.")
+    return run_dirs[-1]
+
+
+def load_slice_run_status(run_dir: Path) -> dict[str, Any]:
+    status_path = run_dir / "run-status.json"
+    if not status_path.exists():
+        raise DocgardenError(f"Slice run status not found: {status_path}")
+    try:
+        payload = json.loads(status_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise DocgardenError(f"Slice run status is not valid JSON: {status_path}") from exc
+    if not isinstance(payload, dict):
+        raise DocgardenError(f"Slice run status must be a JSON object: {status_path}")
+    return payload
+
+
+def summarize_slice_run(run_dir: Path) -> dict[str, Any]:
+    status = load_slice_run_status(run_dir)
+    worker_outputs = sorted(str(path) for path in run_dir.glob("worker-round-*.output.json"))
+    review_outputs = sorted(str(path) for path in run_dir.glob("review-round-*.output.json"))
+    return {
+        "run_dir": str(run_dir),
+        "status": status,
+        "worker_outputs": worker_outputs,
+        "review_outputs": review_outputs,
+        "stdout_logs": sorted(str(path) for path in run_dir.glob("*.stdout.txt")),
+        "stderr_logs": sorted(str(path) for path in run_dir.glob("*.stderr.txt")),
+    }
+
+
+def stop_slice_run(run_dir: Path) -> dict[str, Any]:
+    status = load_slice_run_status(run_dir)
+    base_status = {
+        key: value
+        for key, value in status.items()
+        if key not in {"status", "last_heartbeat_at", "stopped_at", "stop_note"}
+    }
+    pid = status.get("agent_pid")
+    stop_note = "Run was not active."
+    if status.get("status") in RUN_ACTIVE_STATUSES and isinstance(pid, int):
+        try:
+            os.kill(pid, signal.SIGTERM)
+            stop_note = f"Sent SIGTERM to pid {pid}."
+        except ProcessLookupError:
+            stop_note = f"Process {pid} was no longer running."
+        except PermissionError as exc:
+            raise DocgardenError(
+                f"Could not stop slice run pid {pid}: {exc}."
+            ) from exc
+    elif status.get("status") in RUN_ACTIVE_STATUSES:
+        stop_note = "Run was active but no agent_pid was recorded."
+
+    _write_run_status(
+        run_dir,
+        **base_status,
+        status="stopped",
+        stopped_at=_iso_now(),
+        stop_note=stop_note,
+        last_heartbeat_at=_iso_now(),
+    )
+    return summarize_slice_run(run_dir)
+
+
+def recover_slice_run(
+    repo_root: Path,
+    run_dir: Path,
+    *,
+    verify: bool = True,
+) -> dict[str, Any]:
+    summary = summarize_slice_run(run_dir)
+    recovery: dict[str, Any] = {
+        "run_dir": str(run_dir),
+        "status": summary["status"],
+        "tracked_changes": _git_diff_name_only(repo_root),
+        "untracked_paths": _git_untracked_paths(repo_root),
+        "worker_outputs": summary["worker_outputs"],
+        "review_outputs": summary["review_outputs"],
+    }
+    recovery["recovery_recommendation"] = _recovery_recommendation(recovery)
+    if verify:
+        recovery["verification"] = {
+            "pytest": _run_command_capture(["uv", "run", "pytest"], cwd=repo_root),
+            "scan": _run_command_capture(["uv", "run", "docgarden", "scan"], cwd=repo_root),
+        }
+    return recovery
+
+
+def _run_command_capture(command: list[str], *, cwd: Path) -> dict[str, Any]:
+    completed = subprocess.run(
+        command,
+        cwd=cwd,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    return {
+        "command": command,
+        "returncode": completed.returncode,
+        "stdout": completed.stdout,
+        "stderr": completed.stderr,
+    }
+
+
+def _git_diff_name_only(repo_root: Path) -> list[str]:
+    completed = subprocess.run(
+        ["git", "diff", "--name-only"],
+        cwd=repo_root,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    if completed.returncode != 0:
+        return []
+    return [line for line in completed.stdout.splitlines() if line.strip()]
+
+
+def _git_untracked_paths(repo_root: Path) -> list[str]:
+    completed = subprocess.run(
+        ["git", "status", "--short"],
+        cwd=repo_root,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    if completed.returncode != 0:
+        return []
+    paths: list[str] = []
+    for line in completed.stdout.splitlines():
+        if line.startswith("?? "):
+            paths.append(line[3:])
+    return paths
+
+
+def _recovery_recommendation(payload: dict[str, Any]) -> str:
+    status = payload.get("status")
+    tracked = payload.get("tracked_changes", [])
+    worker_outputs = payload.get("worker_outputs", [])
+    review_outputs = payload.get("review_outputs", [])
+    run_status = status.get("status") if isinstance(status, dict) else None
+    if review_outputs:
+        return "review_output_available"
+    if worker_outputs:
+        return "worker_output_available"
+    if tracked and run_status in {"failed", "stopped"}:
+        return "partial_repo_changes_need_review"
+    if run_status in {"failed", "stopped"}:
+        return "safe_to_retry"
+    return "inspect_run_status"
 
 
 def _build_codex_subprocess_env() -> dict[str, str]:

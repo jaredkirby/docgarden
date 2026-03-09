@@ -9,7 +9,12 @@ from .prompts import (
 from .runner import (
     DEFAULT_REVIEWER_TIMEOUT_SECONDS,
     DEFAULT_WORKER_TIMEOUT_SECONDS,
+    load_slice_run_status,
+    recover_slice_run,
+    resolve_slice_run_dir,
     run_slice_loop,
+    stop_slice_run,
+    summarize_slice_run,
 )
 
 __all__ = [
@@ -23,6 +28,11 @@ __all__ = [
     "build_implementation_prompt",
     "build_review_prompt",
     "build_slice_paths",
+    "load_slice_run_status",
     "load_slice_catalog",
+    "recover_slice_run",
+    "resolve_slice_run_dir",
     "run_slice_loop",
+    "stop_slice_run",
+    "summarize_slice_run",
 ]

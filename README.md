@@ -23,6 +23,9 @@ docgarden plan reopen FINDING_ID
 docgarden slices next
 docgarden slices kickoff-prompt
 docgarden slices review-prompt --worker-output .docgarden/slice-loops/.../worker-round-1.output.json
+docgarden slices watch --max-updates 1
+docgarden slices stop
+docgarden slices recover
 docgarden slices run --max-slices 1
 docgarden slices run --max-slices 1 --worker-timeout-seconds 900
 docgarden slices run --max-slices 1 --reviewer-timeout-seconds 300
@@ -150,6 +153,19 @@ live fields are:
 - `last_heartbeat_at`: the most recent liveness update written by the runner
 - `elapsed_seconds`: how long the current phase has been running
 - `agent_pid`: the local `codex exec` process id backing the current phase
+
+The operator control commands build on those artifacts:
+
+- `docgarden slices watch`
+  Reads the latest run directory by default and prints its current status
+  summary. Use `--max-updates 0` to keep polling until the run stops.
+- `docgarden slices stop`
+  Sends `SIGTERM` to the `agent_pid` recorded in `run-status.json` and marks the
+  run as `stopped`.
+- `docgarden slices recover`
+  Summarizes the run, reports current tracked/untracked repo changes, and by
+  default reruns `uv run pytest` plus `uv run docgarden scan` so operators can
+  judge whether a timed-out or interrupted run left reviewable work behind.
 
 For other repos, the `slices` CLI also accepts path overrides such as
 `--catalog-path`, `--spec-path`, `--plan-path`, `--artifacts-dir`,

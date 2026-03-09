@@ -63,6 +63,9 @@ docgarden slices run --catalog-path <slice-backlog.md> --spec-path <spec.md> --p
    - stdout/stderr logs if something failed
    The CLI now prints the artifact directory to stderr as soon as each slice
    starts, so you can inspect the live run before the final JSON summary lands.
+   You can also use `uv run docgarden slices watch --max-updates 1` against the
+   same artifacts directory for a one-shot summary, or `--max-updates 0` to
+   keep polling until the run exits.
 
 4. Decide what to do from the reviewer recommendation.
    - `ready_for_next_slice`: report success and, if asked, run the next slice.
@@ -162,6 +165,13 @@ When `docgarden slices run` times out:
    ```
 5. Only after that decide whether to retry, review the partial work manually,
    or escalate a real blocker.
+
+If you need operator controls instead of manual shell work:
+
+- `uv run docgarden slices stop --run-dir <run-dir>` to stop the recorded pid
+  and mark the run `stopped`
+- `uv run docgarden slices recover --run-dir <run-dir>` to summarize repo
+  changes and rerun verification without rediscovering the recovery workflow
 
 ## When to pause and escalate
 

@@ -18,8 +18,11 @@ from .cli_commands import (
     command_show,
     command_slices_kickoff_prompt,
     command_slices_next,
+    command_slices_recover,
     command_slices_review_prompt,
     command_slices_run,
+    command_slices_stop,
+    command_slices_watch,
     command_status,
 )
 from .errors import DocgardenError
@@ -215,6 +218,53 @@ def build_parser() -> argparse.ArgumentParser:
         help="Path to the prior reviewer output JSON for re-review context.",
     )
     slices_review.set_defaults(func=command_slices_review_prompt)
+    slices_watch = slices_subparsers.add_parser(
+        "watch",
+        help="Inspect the latest slice run status, optionally polling until it changes.",
+    )
+    _add_slice_path_arguments(slices_watch)
+    slices_watch.add_argument(
+        "--run-dir",
+        help="Explicit slice run directory. Defaults to the latest run under the artifacts dir.",
+    )
+    slices_watch.add_argument(
+        "--interval-seconds",
+        type=float,
+        default=2.0,
+        help="Polling interval when watching an active run.",
+    )
+    slices_watch.add_argument(
+        "--max-updates",
+        type=int,
+        default=1,
+        help="Maximum status snapshots to print before exiting. Use 0 to keep polling until the run stops.",
+    )
+    slices_watch.set_defaults(func=command_slices_watch)
+    slices_stop = slices_subparsers.add_parser(
+        "stop",
+        help="Stop an active slice run using the pid recorded in run-status.json.",
+    )
+    _add_slice_path_arguments(slices_stop)
+    slices_stop.add_argument(
+        "--run-dir",
+        help="Explicit slice run directory. Defaults to the latest run under the artifacts dir.",
+    )
+    slices_stop.set_defaults(func=command_slices_stop)
+    slices_recover = slices_subparsers.add_parser(
+        "recover",
+        help="Inspect a stopped or failed slice run and optionally rerun verification.",
+    )
+    _add_slice_path_arguments(slices_recover)
+    slices_recover.add_argument(
+        "--run-dir",
+        help="Explicit slice run directory. Defaults to the latest run under the artifacts dir.",
+    )
+    slices_recover.add_argument(
+        "--skip-verification",
+        action="store_true",
+        help="Skip `uv run pytest` and `uv run docgarden scan` during recovery.",
+    )
+    slices_recover.set_defaults(func=command_slices_recover)
     slices_run = slices_subparsers.add_parser(
         "run",
         help="Automate the worker/reviewer loop for one or more implementation slices.",

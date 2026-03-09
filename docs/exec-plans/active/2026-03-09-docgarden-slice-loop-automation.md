@@ -80,6 +80,7 @@ inside `docgarden`.
 - 2026-03-09: Added `run-status.json` artifacts and immediate stderr announcements of the slice run directory so timeout triage has a canonical place to look for the current phase, timeout settings, and latest error.
 - 2026-03-09: Added timeout-focused regression coverage for role-specific budgets, mixed timeout flag validation, and the real-world case where a timed-out worker leaves useful repo changes behind for manual salvage.
 - 2026-03-09: Added heartbeat-driven `run-status.json` updates so long worker/reviewer passes now refresh `phase_started_at`, `last_heartbeat_at`, `elapsed_seconds`, and `agent_pid` while the nested `codex exec` process is still running.
+- 2026-03-09: Added operator-facing `docgarden slices watch`, `stop`, and `recover` commands so humans can inspect the latest run, stop an active pid-backed run cleanly, and rerun verification for timed-out or interrupted work without rebuilding the recovery flow manually.
 
 ## Discoveries
 
@@ -98,6 +99,7 @@ inside `docgarden`.
 - Buffered subprocess capture is the wrong UX for long-running agent work because it hides the difference between “healthy but busy” and “stuck before first token”; writing logs live to disk makes the artifact directory genuinely useful during a run.
 - Timeout recovery is an operator workflow, not just an error string. The tool and docs need to make it obvious that a timed-out worker may still have produced reviewable repo changes.
 - Operators also need positive liveness signals during healthy long runs, not just better failure logs after the fact; heartbeat and elapsed-time fields make the distinction between “slow” and “wedged” much easier.
+- Once a run is inspectable, operators also need first-class controls to act on it. Status visibility without `stop` and `recover` still leaves too much ad-hoc shell work when a run needs intervention.
 
 ## Decision Log
 
@@ -113,6 +115,7 @@ inside `docgarden`.
 - 2026-03-09: Keep the legacy `--agent-timeout-seconds` flag for compatibility, but prefer explicit `--worker-timeout-seconds` and `--reviewer-timeout-seconds` so operators can give implementation work more room without weakening review feedback loops.
 - 2026-03-09: Treat timeout observability as a first-class artifact concern by printing the run directory immediately, streaming logs to disk, and persisting `run-status.json` alongside prompts and structured outputs.
 - 2026-03-09: Keep `run-status.json` merge-based and heartbeat refreshed so later status transitions like `failed` or `ready_for_next_slice` do not discard the elapsed-time context operators used during the live run.
+- 2026-03-09: Treat run directories as the control plane for manual intervention too: the latest-run resolver, `watch`, `stop`, and `recover` all operate from the artifact directory instead of depending on parent-session state.
 
 ## Outcomes / Retrospective
 
