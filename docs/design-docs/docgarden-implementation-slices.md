@@ -70,7 +70,7 @@ criteria rather than re-explaining the whole product vision.
 | S03 | completed | Plan triage commands and lifecycle stages | S02 |
 | S04 | completed | Focus and resolve queue operations | S02, S03 |
 | S05 | completed | Changed-scope scans | S00 |
-| S06 | queued | Generated-doc contract checks | S00 |
+| S06 | completed | Generated-doc contract checks | S00 |
 | S07 | queued | Workflow drift detector | S01 |
 | S08 | queued | Routing quality detector for stale targets | S01 |
 | S09 | queued | Score trend and weighted domain rollups | S02 |
@@ -89,7 +89,7 @@ The repo has already shipped the Phase 1 core:
 - score publication to `docs/QUALITY_SCORE.md`
 - narrow safe autofix for stale status and missing headings
 
-The repo has also completed the first five generic Phase 2 slices:
+The repo has also completed the first six generic Phase 2 slices:
 
 - missing local `source_of_truth` artifact checks
 - unsupported `docgarden` validation command checks on non-draft docs
@@ -99,6 +99,8 @@ The repo has also completed the first five generic Phase 2 slices:
 - focus, resolve, and reopen queue operations with append-only status events
 - changed-scope scans that inspect only changed docs and report partial-scan
   limitations explicitly
+- generated-doc contract checks that enforce populated provenance details,
+  runnable regeneration commands, and freshness against local upstream files
 
 ## Atomic slices
 
@@ -238,7 +240,7 @@ Acceptance:
 
 ### S06: Generated-doc contract checks
 
-Status: `queued`
+Status: `completed`
 
 Goal:
 - Enforce the generated-doc rules from the spec rather than only documenting

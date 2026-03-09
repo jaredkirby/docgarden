@@ -6,6 +6,7 @@ import shlex
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
+from urllib.parse import unquote, urlparse
 
 from .markdown import Document, normalize_heading
 from .models import Finding, FindingContext
@@ -18,6 +19,8 @@ SECTION_HEADING_RE = re.compile(r"^(#{1,6})\s+(.+?)\s*$", re.MULTILINE)
 INLINE_CODE_RE = re.compile(r"`([^`\n]+)`")
 FENCED_BLOCK_RE = re.compile(r"```(?:bash|sh|shell)?\n(.*?)```", re.DOTALL)
 MARKDOWN_LINK_RE = re.compile(r"\[[^\]]+\]\(([^)]+)\)")
+URI_SCHEME_RE = re.compile(r"^[A-Za-z][A-Za-z0-9+.-]*:")
+WINDOWS_DRIVE_RE = re.compile(r"^[A-Za-z]:[\\\\/]")
 ROOT_LOCAL_ARTIFACT_NAMES = {
     "AGENTS.md",
     "README.md",
@@ -198,10 +201,18 @@ def invalid_validation_command_findings(
 
 def resolve_repo_artifact(repo_root: Path, value: str) -> Path | None:
     candidate = value.strip()
-    if not candidate or candidate.startswith(("http://", "https://", "mailto:")):
+    if not candidate:
         return None
     if any(char.isspace() for char in candidate):
         return None
+    if is_non_local_reference(candidate):
+        return None
+    if candidate.startswith("file://"):
+        parsed = urlparse(candidate)
+        if parsed.netloc not in {"", "localhost"}:
+            return None
+        resolved = Path(unquote(parsed.path))
+        return resolved if resolved.is_absolute() else repo_root / resolved
 
     path = Path(candidate)
     if path.is_absolute():
@@ -266,12 +277,14 @@ def inspect_generated_doc_contract(
     )
     generated_at = None
     if generated_timestamp_text is None:
-        issues.append("Generated timestamp section must include an ISO-8601 timestamp.")
+        issues.append(
+            "Generated timestamp section must include an offset-aware ISO-8601 timestamp."
+        )
     else:
         generated_at = parse_generated_timestamp(generated_timestamp_text)
         if generated_at is None:
             issues.append(
-                "Generated timestamp section must include a valid ISO-8601 timestamp."
+                "Generated timestamp section must include a valid offset-aware ISO-8601 timestamp."
             )
 
     upstream_reference = extract_section_value(
@@ -294,7 +307,10 @@ def inspect_generated_doc_contract(
     regeneration_commands = extract_commands_from_text(
         sections.get(GENERATED_COMMAND_HEADING, "")
     )
-    if not regeneration_commands:
+    runnable_commands = [
+        command for command in regeneration_commands if is_runnable_command(command)
+    ]
+    if not runnable_commands:
         issues.append(
             "Regeneration command section must include a runnable command snippet."
         )
@@ -350,15 +366,45 @@ def parse_generated_timestamp(value: str) -> datetime | None:
     if normalized.endswith("Z"):
         normalized = normalized[:-1] + "+00:00"
     try:
-        return datetime.fromisoformat(normalized)
+        parsed = datetime.fromisoformat(normalized)
     except ValueError:
         return None
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        return None
+    return parsed
 
 
 def source_mtime_for(path: Path, *, reference: datetime) -> datetime:
-    if reference.tzinfo is None:
-        return datetime.fromtimestamp(path.stat().st_mtime)
     return datetime.fromtimestamp(path.stat().st_mtime, tz=reference.tzinfo)
+
+
+def is_non_local_reference(value: str) -> bool:
+    if WINDOWS_DRIVE_RE.match(value):
+        return False
+    scheme_match = URI_SCHEME_RE.match(value)
+    if scheme_match is None:
+        return False
+    return scheme_match.group(0).lower() != "file:"
+
+
+def is_runnable_command(command: str) -> bool:
+    tokens = tokenize_command(command)
+    if not tokens:
+        return False
+    if len(tokens) > 1:
+        return True
+    executable = tokens[0]
+    if executable.startswith(("./", "../", "/")):
+        return True
+    return not looks_like_path_reference(executable)
+
+
+def looks_like_path_reference(value: str) -> bool:
+    if value.startswith("."):
+        return True
+    if "/" in value or "\\" in value:
+        return True
+    return bool(Path(value).suffix)
 
 
 def is_docgarden_command(command: str) -> bool:

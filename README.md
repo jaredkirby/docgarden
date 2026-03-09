@@ -82,5 +82,5 @@ The repo currently includes:
 - manual queue focus, resolve, and reopen commands
 - read-only changed-scope scans for partial local or CI feedback
 
-Next planned slice: generated-doc contract checks for provenance metadata,
-freshness against local upstream artifacts, and regeneration command presence.
+Next planned slice: workflow drift detection for repo-owned scripts, commands,
+and local path references documented in operator-facing docs.

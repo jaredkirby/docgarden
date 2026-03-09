@@ -79,6 +79,9 @@ spec sections to PR-sized implementation units.
 - 2026-03-09: Implemented S06 generated-doc contract checks so `doc_type: generated` docs now require populated provenance details, not just the documented section headings.
 - 2026-03-09: Added local upstream freshness comparison for generated docs, using the generated timestamp plus local file mtimes to flag stale generated references when the source file is newer.
 - 2026-03-09: Added tests covering missing provenance metadata, stale local upstream files, fresh local upstream files, and graceful skips for remote or non-file upstream references.
+- 2026-03-09: Tightened S06 after review so non-HTTP URI schemes such as `s3://` and `gs://` now degrade gracefully instead of being misclassified as missing local files.
+- 2026-03-09: Tightened the generated-doc contract so regeneration commands must look runnable, and generated timestamps must be offset-aware ISO-8601 values before freshness comparisons run.
+- 2026-03-09: Updated the durable slice backlog and README so they now reflect S06 as completed and point the next handoff at S07 workflow drift detection.
 
 ## Discoveries
 
@@ -129,6 +132,12 @@ spec sections to PR-sized implementation units.
 - Local directory paths show up naturally when generated docs describe a source
   folder rather than a single artifact, so freshness checks need to skip
   non-file paths instead of claiming the doc is stale.
+- URI-style references need an explicit non-local escape hatch; otherwise
+  generic path heuristics turn `s3://...`-style sources into false local-file
+  failures.
+- Freshness comparisons are only deterministic when generated timestamps carry
+  an explicit offset, so the contract needs to reject naive timestamps instead
+  of quietly interpreting them in host-local time.
 
 ## Decision Log
 
@@ -168,6 +177,13 @@ spec sections to PR-sized implementation units.
   reference resolves to an existing local file; remote URLs, descriptive text,
   directories, and missing local paths degrade to contract checks or skips
   rather than misleading stale findings.
+- 2026-03-09: Treat any non-`file:` URI scheme as non-local for artifact
+  resolution so storage or SSH references degrade gracefully instead of being
+  reinterpreted as repo-relative paths.
+- 2026-03-09: Require generated timestamps to be offset-aware ISO-8601 values
+  before freshness checks run, and treat single-token path snippets like
+  `scripts/generate_schema.py` as non-runnable regeneration placeholders unless
+  they are invoked as an actual command.
 
 ## Outcomes / Retrospective
 

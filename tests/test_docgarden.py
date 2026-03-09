@@ -444,7 +444,7 @@ Run the generator from CI.
             findings[0].details["issues"],
             [
                 "Generation source section must include provenance details.",
-                "Generated timestamp section must include a valid ISO-8601 timestamp.",
+                "Generated timestamp section must include a valid offset-aware ISO-8601 timestamp.",
                 "Upstream artifact path or script points to a missing local file: scripts/missing-generator.py",
                 "Regeneration command section must include a runnable command snippet.",
             ],
@@ -559,6 +559,37 @@ Partner export API
 
         self.assertEqual(findings, [])
 
+    def test_scan_skips_generated_doc_freshness_for_non_http_uri_source(self) -> None:
+        repo = self.make_repo()
+        write_docs_index(repo, extra_body="\n- [Generated Schema](generated/schema.md)\n")
+        write(
+            repo / "docs" / "generated" / "schema.md",
+            GENERATED_FRONTMATTER
+            + """
+# Generated Schema
+
+## Generation source
+
+Partner object storage
+
+## Generated timestamp
+
+`2026-03-09T12:00:00+00:00`
+
+## Upstream artifact path or script
+
+`s3://bucket/schema.json`
+
+## Regeneration command
+
+`make docs-generated`
+""",
+        )
+
+        findings, _, _ = scan_repo(repo)
+
+        self.assertEqual(findings, [])
+
     def test_scan_skips_generated_doc_freshness_for_local_directory_source(self) -> None:
         repo = self.make_repo()
         write_docs_index(repo, extra_body="\n- [Generated Schema](generated/schema.md)\n")
@@ -590,6 +621,84 @@ Partner export API
         findings, _, _ = scan_repo(repo)
 
         self.assertEqual(findings, [])
+
+    def test_scan_flags_non_runnable_generated_doc_command_snippet(self) -> None:
+        repo = self.make_repo()
+        write_docs_index(repo, extra_body="\n- [Generated Schema](generated/schema.md)\n")
+        write(
+            repo / "docs" / "generated" / "schema.md",
+            GENERATED_FRONTMATTER
+            + """
+# Generated Schema
+
+## Generation source
+
+`scripts/generate_schema.py`
+
+## Generated timestamp
+
+`2026-03-09T12:00:00+00:00`
+
+## Upstream artifact path or script
+
+`https://example.com/schema.json`
+
+## Regeneration command
+
+`scripts/generate_schema.py`
+""",
+        )
+
+        findings, _, _ = scan_repo(repo)
+
+        self.assertEqual([item.kind for item in findings], ["generated-doc-contract"])
+        self.assertEqual(
+            findings[0].details["issues"],
+            [
+                "Regeneration command section must include a runnable command snippet."
+            ],
+        )
+
+    def test_scan_flags_naive_generated_timestamp(self) -> None:
+        repo = self.make_repo()
+        write_docs_index(repo, extra_body="\n- [Generated Schema](generated/schema.md)\n")
+        upstream = repo / "scripts" / "generate_schema.py"
+        write(upstream, "print('schema')\n")
+        upstream_time = datetime(2026, 3, 9, 14, 0, tzinfo=timezone.utc).timestamp()
+        os.utime(upstream, (upstream_time, upstream_time))
+        write(
+            repo / "docs" / "generated" / "schema.md",
+            GENERATED_FRONTMATTER
+            + """
+# Generated Schema
+
+## Generation source
+
+`scripts/generate_schema.py`
+
+## Generated timestamp
+
+`2026-03-09T12:00:00`
+
+## Upstream artifact path or script
+
+`scripts/generate_schema.py`
+
+## Regeneration command
+
+`uv run python scripts/generate_schema.py`
+""",
+        )
+
+        findings, _, _ = scan_repo(repo)
+
+        self.assertEqual([item.kind for item in findings], ["generated-doc-contract"])
+        self.assertEqual(
+            findings[0].details["issues"],
+            [
+                "Generated timestamp section must include a valid offset-aware ISO-8601 timestamp."
+            ],
+        )
 
 
 if __name__ == "__main__":
