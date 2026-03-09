@@ -21,6 +21,8 @@ from .slices import (
     build_implementation_prompt,
     build_review_prompt,
     build_slice_paths,
+    list_slice_runs,
+    prune_slice_runs,
     recover_slice_run,
     resolve_slice_run_dir,
     load_slice_catalog,
@@ -295,6 +297,17 @@ def command_slices_next(args: argparse.Namespace) -> int:
     return 0
 
 
+def command_slices_list(args: argparse.Namespace) -> int:
+    repo_root = Path.cwd()
+    paths = _slice_paths_from_args(repo_root, args)
+    payload = {
+        "artifacts_dir": str(paths.artifacts_dir),
+        "runs": list_slice_runs(paths.artifacts_dir),
+    }
+    print(json.dumps(payload, indent=2, sort_keys=True))
+    return 0
+
+
 def command_slices_kickoff_prompt(args: argparse.Namespace) -> None:
     repo_root = Path.cwd()
     paths = _slice_paths_from_args(repo_root, args)
@@ -434,6 +447,21 @@ def command_slices_retry(args: argparse.Namespace) -> int:
     )
     print(json.dumps(summary, indent=2, sort_keys=True))
     return 0 if summary.get("status") == "completed" else 1
+
+
+def command_slices_prune(args: argparse.Namespace) -> int:
+    if args.keep < 0:
+        raise DocgardenError("`docgarden slices prune --keep` must be 0 or greater.")
+    repo_root = Path.cwd()
+    paths = _slice_paths_from_args(repo_root, args)
+    payload = prune_slice_runs(
+        paths.artifacts_dir,
+        keep=args.keep,
+        apply=args.apply,
+        prunable_statuses=set(args.statuses) if args.statuses else None,
+    )
+    print(json.dumps(payload, indent=2, sort_keys=True))
+    return 0
 
 
 def command_slices_run(args: argparse.Namespace) -> int:

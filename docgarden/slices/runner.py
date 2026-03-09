@@ -5,6 +5,7 @@ from datetime import datetime
 import json
 import os
 import signal
+import shutil
 import subprocess
 from pathlib import Path
 import sys
@@ -45,6 +46,14 @@ DEFAULT_WORKER_TIMEOUT_SECONDS = 900
 DEFAULT_REVIEWER_TIMEOUT_SECONDS = 300
 RUN_STATUS_HEARTBEAT_SECONDS = 5.0
 RUN_ACTIVE_STATUSES = frozenset({"running"})
+DEFAULT_PRUNABLE_RUN_STATUSES = frozenset(
+    {
+        "ready_for_next_slice",
+        "failed",
+        "stopped",
+        "blocked_pending_product_clarification",
+    }
+)
 
 
 @dataclass(slots=True)
@@ -703,8 +712,19 @@ def _iso_now() -> str:
     return datetime.now().isoformat()
 
 
+def _iso_from_timestamp(timestamp: float) -> str:
+    return datetime.fromtimestamp(timestamp).isoformat()
+
+
 def _elapsed_seconds(started_monotonic: float) -> float:
     return round(time.monotonic() - started_monotonic, 1)
+
+
+def _slice_id_from_run_dir(run_dir: Path) -> str | None:
+    suffix = run_dir.name.rsplit("-", 1)[-1]
+    if suffix.startswith("s") and suffix[1:].isdigit():
+        return f"S{suffix[1:]}"
+    return None
 
 
 def resolve_slice_run_dir(
@@ -753,6 +773,39 @@ def summarize_slice_run(run_dir: Path) -> dict[str, Any]:
     }
 
 
+def list_slice_runs(artifacts_dir: Path) -> list[dict[str, Any]]:
+    if not artifacts_dir.exists():
+        return []
+    summaries: list[dict[str, Any]] = []
+    for run_dir in sorted(
+        (path for path in artifacts_dir.iterdir() if path.is_dir()),
+        reverse=True,
+    ):
+        status_path = run_dir / "run-status.json"
+        if status_path.exists():
+            status = load_slice_run_status(run_dir)
+        else:
+            status = {
+                "slice_id": _slice_id_from_run_dir(run_dir),
+                "status": "legacy_missing_status",
+                "updated_at": _iso_from_timestamp(run_dir.stat().st_mtime),
+            }
+        summaries.append(
+            {
+                "run_dir": str(run_dir),
+                "name": run_dir.name,
+                "slice_id": status.get("slice_id"),
+                "title": status.get("title"),
+                "status": status.get("status"),
+                "current_phase": status.get("current_phase"),
+                "updated_at": status.get("updated_at"),
+                "elapsed_seconds": status.get("elapsed_seconds"),
+                "retry_of": status.get("retry_of"),
+            }
+        )
+    return summaries
+
+
 def stop_slice_run(run_dir: Path) -> dict[str, Any]:
     status = load_slice_run_status(run_dir)
     base_status = {
@@ -784,6 +837,36 @@ def stop_slice_run(run_dir: Path) -> dict[str, Any]:
         last_heartbeat_at=_iso_now(),
     )
     return summarize_slice_run(run_dir)
+
+
+def prune_slice_runs(
+    artifacts_dir: Path,
+    *,
+    keep: int = 3,
+    apply: bool = False,
+    prunable_statuses: set[str] | None = None,
+) -> dict[str, Any]:
+    if keep < 0:
+        raise DocgardenError("`keep` must be 0 or greater.")
+    summaries = list_slice_runs(artifacts_dir)
+    statuses = prunable_statuses or set(DEFAULT_PRUNABLE_RUN_STATUSES)
+    prunable = [item for item in summaries if item.get("status") in statuses]
+    preserved = prunable[:keep]
+    candidates = prunable[keep:]
+    removed: list[str] = []
+    if apply:
+        for item in candidates:
+            shutil.rmtree(item["run_dir"])
+            removed.append(item["run_dir"])
+    return {
+        "artifacts_dir": str(artifacts_dir),
+        "apply": apply,
+        "keep": keep,
+        "prunable_statuses": sorted(statuses),
+        "preserved_runs": [item["run_dir"] for item in preserved],
+        "prune_candidates": [item["run_dir"] for item in candidates],
+        "removed_runs": removed,
+    }
 
 
 def recover_slice_run(

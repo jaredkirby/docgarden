@@ -731,6 +731,32 @@ def test_cli_slices_watch_prints_latest_run_summary(tmp_path, monkeypatch, capsy
     assert payload["status"]["elapsed_seconds"] == 12.5
 
 
+def test_cli_slices_list_reports_runs(tmp_path, monkeypatch, capsys) -> None:
+    repo = make_slice_repo(tmp_path)
+    first = repo / ".docgarden" / "slice-loops" / "2026-03-09T101500-s09"
+    second = repo / ".docgarden" / "slice-loops" / "2026-03-09T101501-s10"
+    write_json(first / "run-status.json", {"slice_id": "S09", "status": "ready_for_next_slice"})
+    write_json(second / "run-status.json", {"slice_id": "S10", "status": "failed"})
+    monkeypatch.chdir(repo)
+
+    assert main(["slices", "list"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["artifacts_dir"].endswith(".docgarden/slice-loops")
+    assert [item["slice_id"] for item in payload["runs"]] == ["S10", "S09"]
+
+
+def test_cli_slices_list_handles_legacy_run_without_status(tmp_path, monkeypatch, capsys) -> None:
+    repo = make_slice_repo(tmp_path)
+    legacy = repo / ".docgarden" / "slice-loops" / "2026-03-09T092208-s08"
+    legacy.mkdir(parents=True, exist_ok=True)
+    monkeypatch.chdir(repo)
+
+    assert main(["slices", "list"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["runs"][0]["slice_id"] == "S08"
+    assert payload["runs"][0]["status"] == "legacy_missing_status"
+
+
 def test_cli_slices_stop_marks_run_stopped(tmp_path, monkeypatch, capsys) -> None:
     repo = make_slice_repo(tmp_path)
     run_dir = repo / ".docgarden" / "slice-loops" / "2026-03-09T101501-s10"
@@ -803,6 +829,30 @@ def test_cli_slices_recover_runs_verification_and_reports_partial_changes(
     assert payload["tracked_changes"] == ["docgarden/state.py"]
     assert payload["verification"]["pytest"]["returncode"] == 0
     assert payload["verification"]["scan"]["returncode"] == 0
+
+
+def test_cli_slices_prune_dry_run_and_apply(tmp_path, monkeypatch, capsys) -> None:
+    repo = make_slice_repo(tmp_path)
+    run_root = repo / ".docgarden" / "slice-loops"
+    for name, status in [
+        ("2026-03-09T101500-s07", "failed"),
+        ("2026-03-09T101501-s08", "ready_for_next_slice"),
+        ("2026-03-09T101502-s09", "stopped"),
+    ]:
+        write_json(run_root / name / "run-status.json", {"slice_id": name[-3:].upper(), "status": status})
+    monkeypatch.chdir(repo)
+
+    assert main(["slices", "prune", "--keep", "1"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert len(payload["prune_candidates"]) == 2
+    assert len(payload["removed_runs"]) == 0
+    assert len(list(run_root.iterdir())) == 3
+
+    assert main(["slices", "prune", "--keep", "1", "--apply"]) == 0
+    applied = json.loads(capsys.readouterr().out)
+    assert len(applied["removed_runs"]) == 2
+    remaining = sorted(path.name for path in run_root.iterdir())
+    assert remaining == ["2026-03-09T101502-s09"]
 
 
 def test_cli_slices_retry_reuses_prior_review_context(

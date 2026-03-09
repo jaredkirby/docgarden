@@ -21,12 +21,14 @@ docgarden plan focus FINDING_ID_OR_CLUSTER
 docgarden plan resolve FINDING_ID --result fixed
 docgarden plan reopen FINDING_ID
 docgarden slices next
+docgarden slices list
 docgarden slices kickoff-prompt
 docgarden slices review-prompt --worker-output .docgarden/slice-loops/.../worker-round-1.output.json
 docgarden slices watch --max-updates 1
 docgarden slices stop
 docgarden slices recover
 docgarden slices retry
+docgarden slices prune --keep 3
 docgarden slices run --max-slices 1
 docgarden slices run --max-slices 1 --worker-timeout-seconds 900
 docgarden slices run --max-slices 1 --reviewer-timeout-seconds 300
@@ -172,6 +174,13 @@ The operator control commands build on those artifacts:
   context. If the earlier run already has worker/reviewer JSON artifacts, the
   retry flow reuses them to resume from the right worker or reviewer round
   instead of starting from scratch.
+- `docgarden slices list`
+  Shows the run directories under the configured artifacts root, newest first,
+  with their slice ids, statuses, and basic timing fields.
+- `docgarden slices prune`
+  Cleans up old run directories. It is a dry run by default; add `--apply` to
+  actually delete older non-running runs after the most recent `--keep` runs are
+  preserved.
 
 For other repos, the `slices` CLI also accepts path overrides such as
 `--catalog-path`, `--spec-path`, `--plan-path`, `--artifacts-dir`,

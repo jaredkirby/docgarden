@@ -17,7 +17,9 @@ from .cli_commands import (
     command_scan,
     command_show,
     command_slices_kickoff_prompt,
+    command_slices_list,
     command_slices_next,
+    command_slices_prune,
     command_slices_retry,
     command_slices_recover,
     command_slices_review_prompt,
@@ -168,6 +170,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     _add_slice_path_arguments(slices_next)
     slices_next.set_defaults(func=command_slices_next)
+    slices_list = slices_subparsers.add_parser(
+        "list",
+        help="List slice run artifact directories and their current statuses.",
+    )
+    _add_slice_path_arguments(slices_list)
+    slices_list.set_defaults(func=command_slices_list)
     slices_kickoff = slices_subparsers.add_parser(
         "kickoff-prompt",
         help="Render the implementation prompt for a slice.",
@@ -323,6 +331,29 @@ def build_parser() -> argparse.ArgumentParser:
         help="Additional argument to pass through to `codex exec`. Repeat as needed.",
     )
     slices_retry.set_defaults(func=command_slices_retry)
+    slices_prune = slices_subparsers.add_parser(
+        "prune",
+        help="Dry-run or delete old non-running slice run artifact directories.",
+    )
+    _add_slice_path_arguments(slices_prune)
+    slices_prune.add_argument(
+        "--keep",
+        type=int,
+        default=3,
+        help="Keep this many most-recent prunable runs. Defaults to 3.",
+    )
+    slices_prune.add_argument(
+        "--status",
+        action="append",
+        dest="statuses",
+        help="Prunable run status to target. Repeat as needed. Defaults to common finished statuses.",
+    )
+    slices_prune.add_argument(
+        "--apply",
+        action="store_true",
+        help="Actually delete prune candidates. Without this flag, prune is a dry run.",
+    )
+    slices_prune.set_defaults(func=command_slices_prune)
     slices_run = slices_subparsers.add_parser(
         "run",
         help="Automate the worker/reviewer loop for one or more implementation slices.",
