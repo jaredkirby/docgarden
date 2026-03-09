@@ -457,6 +457,7 @@ Acceptance:
 ## Related docs
 
 - [Docgarden spec](docgarden-spec.md)
+- [Agent prompts](docgarden-agent-prompts.md)
 - [Design docs index](index.md)
 - [Docgarden spec slicing exec plan](../exec-plans/active/2026-03-09-docgarden-spec-slicing.md)
 - [Docgarden alignment phase 2 exec plan](../exec-plans/active/2026-03-09-docgarden-alignment-phase-2.md)

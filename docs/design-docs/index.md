@@ -64,5 +64,6 @@ grow beyond the current MVP implementation.
 - [Docs index](../index.md)
 - [Docgarden spec](docgarden-spec.md)
 - [Implementation slices](docgarden-implementation-slices.md)
+- [Agent prompts](docgarden-agent-prompts.md)
 - [Phase 2 alignment exec plan](../exec-plans/active/2026-03-09-docgarden-alignment-phase-2.md)
 - [Spec slicing exec plan](../exec-plans/active/2026-03-09-docgarden-spec-slicing.md)
