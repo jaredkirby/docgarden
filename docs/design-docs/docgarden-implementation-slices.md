@@ -73,7 +73,7 @@ criteria rather than re-explaining the whole product vision.
 | S06 | completed | Generated-doc contract checks | S00 |
 | S07 | completed | Workflow drift detector | S01 |
 | S08 | completed | Routing quality detector for stale targets | S01 |
-| S09 | queued | Score trend and weighted domain rollups | S02 |
+| S09 | completed | Score trend and weighted domain rollups | S02 |
 | S10 | queued | Review packet preparation and import | S02, S03 |
 | S11 | queued | Safe autofix expansion | S07, S08 |
 | S12 | queued | CI enforcement and scheduled automation | S03, S09, S11 |
@@ -107,6 +107,9 @@ The repo has also completed the first six generic Phase 2 slices:
 - routing quality checks that keep `broken-route` findings distinct from
   `stale-route` findings and flag AGENTS/index routes that still point current
   readers at archived, deprecated, or superseded stale docs
+- score state trend summaries that persist across scans, configurable
+  domain-weighted rollups, and separate critical-domain regression reporting so
+  `score.json` and `QUALITY_SCORE.md` show both weighted and raw domain scores
 
 ## Atomic slices
 
@@ -317,7 +320,7 @@ Acceptance:
 
 ### S09: Score trend and weighted domain rollups
 
-Status: `queued`
+Status: `completed`
 
 Goal:
 - Make `score.json` useful for change over time, not just a snapshot.

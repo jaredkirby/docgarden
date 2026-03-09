@@ -163,6 +163,45 @@ class Scorecard:
     domains: dict[str, dict[str, Any]]
     top_gaps: list[str]
     trend: dict[str, Any]
+    rollup: dict[str, Any] = field(default_factory=dict)
+
+    @classmethod
+    def from_dict(cls, payload: dict[str, Any]) -> "Scorecard":
+        raw_trend = payload.get("trend")
+        trend_points = []
+        trend_summary: dict[str, Any] = {}
+        if isinstance(raw_trend, dict):
+            raw_points = raw_trend.get("points")
+            if isinstance(raw_points, list):
+                trend_points = [item for item in raw_points if isinstance(item, dict)]
+            raw_summary = raw_trend.get("summary")
+            if isinstance(raw_summary, dict):
+                trend_summary = raw_summary
+
+        trend: dict[str, Any] = {"points": trend_points}
+        if trend_summary:
+            trend["summary"] = trend_summary
+
+        raw_rollup = payload.get("rollup")
+        rollup = raw_rollup if isinstance(raw_rollup, dict) else {}
+
+        return cls(
+            updated_at=str(payload["updated_at"]),
+            overall_score=int(payload["overall_score"]),
+            strict_score=int(payload["strict_score"]),
+            dimensions={
+                str(name): int(score)
+                for name, score in dict(payload.get("dimensions", {})).items()
+            },
+            domains={
+                str(name): dict(domain_payload)
+                for name, domain_payload in dict(payload.get("domains", {})).items()
+                if isinstance(domain_payload, dict)
+            },
+            top_gaps=_string_list(payload.get("top_gaps")),
+            trend=trend,
+            rollup=rollup,
+        )
 
 
 @dataclass(slots=True)

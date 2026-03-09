@@ -33,6 +33,7 @@ from docgarden.state import (
     latest_events_by_id,
     load_findings_history,
     load_plan,
+    load_score,
     ordered_active_events,
     record_plan_resolution,
     record_plan_triage_stage,
@@ -1024,7 +1025,35 @@ def test_write_quality_score_updates_existing_frontmatter(tmp_path) -> None:
         dimensions={"Structure & metadata": 95},
         domains={"docs": {"score": 90, "status": "high trust", "doc_count": 1, "findings": 0}},
         top_gaps=["Keep active exec plans current."],
-        trend={"points": []},
+        trend={
+            "points": [
+                {
+                    "updated_at": "2026-03-08T15:30:00",
+                    "overall_score": 92,
+                    "strict_score": 90,
+                    "weighted_domain_rollup": 88,
+                    "critical_regressions": ["docs"],
+                }
+            ],
+            "summary": {
+                "overall_delta": -4,
+                "strict_delta": -3,
+                "weighted_rollup_delta": -5,
+            },
+        },
+        rollup={
+            "weighted_score": 88,
+            "raw_average_score": 90,
+            "weights": {"docs": 4},
+            "critical_regressions": [
+                {
+                    "domain": "docs",
+                    "score": 90,
+                    "previous_score": 98,
+                    "delta": -8,
+                }
+            ],
+        },
     )
     quality_path = tmp_path / "docs" / "QUALITY_SCORE.md"
     write(
@@ -1048,4 +1077,123 @@ review_cycle_days: 30
 
     assert "last_reviewed: '2026-03-08'" in written
     assert "- Overall: 92" in written
-    assert "- docs: 90 (high trust)" in written
+    assert "- Weighted domain rollup: 88" in written
+    assert "- docs: 90 (high trust, weight: 4)" in written
+    assert "## Critical-Domain Regressions" in written
+    assert "- docs: 90 (-8 from 98)" in written
+    assert "weighted rollup 88; critical regressions: docs" in written
+
+
+def test_load_score_supports_legacy_payload_without_rollup(tmp_path) -> None:
+    score_path = tmp_path / ".docgarden" / "score.json"
+    write_json(
+        score_path,
+        {
+            "updated_at": "2026-03-08T15:30:00",
+            "overall_score": 100,
+            "strict_score": 98,
+            "dimensions": {"Structure & metadata": 100},
+            "domains": {
+                "docs": {
+                    "score": 100,
+                    "status": "high trust",
+                    "doc_count": 1,
+                    "findings": 0,
+                }
+            },
+            "top_gaps": [],
+            "trend": {"points": []},
+        },
+    )
+
+    scorecard = load_score(score_path)
+
+    assert scorecard is not None
+    assert scorecard.rollup == {}
+    assert scorecard.trend == {"points": []}
+
+
+def test_build_scorecard_uses_domain_weights_and_tracks_critical_regressions() -> None:
+    context = FindingContext(
+        rel_path="docs/index.md",
+        domain="docs",
+        discovered_at="2026-03-08T12:00:00",
+    )
+    finding = Finding.open_issue(
+        context,
+        kind="missing-sections",
+        severity="medium",
+        summary="Missing headings.",
+        evidence=["Missing headings: Scope"],
+        recommended_action="Add the missing section.",
+        safe_to_autofix=True,
+        cluster="structure-gaps",
+        suffix="sections",
+    )
+    previous_score = Scorecard(
+        updated_at="2026-03-08T12:00:00",
+        overall_score=98,
+        strict_score=98,
+        dimensions={"Structure & metadata": 100},
+        domains={
+            "design-docs": {
+                "score": 100,
+                "status": "high trust",
+                "doc_count": 1,
+                "findings": 0,
+            },
+            "docs": {
+                "score": 96,
+                "status": "high trust",
+                "doc_count": 1,
+                "findings": 0,
+            },
+            "exec-plans": {
+                "score": 100,
+                "status": "high trust",
+                "doc_count": 1,
+                "findings": 0,
+            },
+        },
+        top_gaps=[],
+        trend={
+            "points": [
+                {
+                    "updated_at": "2026-03-08T12:00:00",
+                    "overall_score": 98,
+                    "strict_score": 98,
+                    "weighted_domain_rollup": 98,
+                    "critical_regressions": [],
+                }
+            ]
+        },
+        rollup={
+            "weighted_score": 98,
+            "raw_average_score": 99,
+            "weights": {"design-docs": 2, "docs": 4, "exec-plans": 3},
+            "critical_regressions": [],
+        },
+    )
+
+    scorecard = build_scorecard(
+        [finding],
+        {"design-docs": 1, "docs": 1, "exec-plans": 1},
+        datetime(2026, 3, 8, 13, 0, 0),
+        previous_score=previous_score,
+        critical_domains=["docs", "exec-plans"],
+        domain_weights={"design-docs": 2, "docs": 4, "exec-plans": 3},
+    )
+
+    assert scorecard.rollup["weighted_score"] == 96
+    assert scorecard.rollup["raw_average_score"] == 97
+    assert scorecard.rollup["weights"] == {
+        "design-docs": 2,
+        "docs": 4,
+        "exec-plans": 3,
+    }
+    assert scorecard.rollup["critical_regressions"] == [
+        {"domain": "docs", "score": 92, "previous_score": 96, "delta": -4}
+    ]
+    assert scorecard.trend["summary"]["weighted_rollup_delta"] == -2
+    assert len(scorecard.trend["points"]) == 2
+    assert scorecard.trend["points"][-1]["critical_regressions"] == ["docs"]

@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import asdict
 from datetime import datetime
 
+from .config import Config
 from .files import atomic_write_text
 from .models import RepoPaths, ScanRunResult
 from .quality import build_scorecard
@@ -19,6 +20,7 @@ from .state import (
     append_scan_events,
     build_plan,
     compute_scan_hash,
+    load_score,
     load_plan,
     write_json,
     write_score,
@@ -56,11 +58,20 @@ def _write_run_artifacts(
 
 def run_scan(paths: RepoPaths, *, scan_time: datetime | None = None) -> ScanRunResult:
     now = scan_time or datetime.now()
+    config = Config.load(paths.config)
+    previous_score = load_score(paths.score)
     findings, domain_doc_counts, documents = scan_repo(paths.repo_root)
     latest = append_scan_events(paths.findings, findings, now)
     score_tracked_findings = active_findings_from_latest_events(latest)
     actionable_findings = actionable_findings_from_latest_events(latest)
-    scorecard = build_scorecard(score_tracked_findings, domain_doc_counts, now)
+    scorecard = build_scorecard(
+        score_tracked_findings,
+        domain_doc_counts,
+        now,
+        previous_score=previous_score,
+        critical_domains=config.critical_domains,
+        domain_weights=config.domain_weights,
+    )
     write_score(paths.score, scorecard)
     previous_plan = load_plan(paths.plan) if paths.plan.exists() else None
     plan = build_plan(

@@ -87,6 +87,9 @@ spec sections to PR-sized implementation units.
 - 2026-03-09: Implemented S08 routing quality detection so repo-wide scans now keep missing-target `broken-route` findings separate from `stale-route` findings when AGENTS or index docs still route readers to archived, deprecated, or superseded stale docs.
 - 2026-03-09: Extended routing-quality evidence and recommended actions to surface canonical replacements from `superseded_by` when the replacement resolves to a current canonical doc.
 - 2026-03-09: Added regression coverage for archived index routes, replacement suggestions, and the "stale only when a better canonical route exists" boundary.
+- 2026-03-09: Implemented S09 score trend persistence so full scans now append compact trend points in `score.json` instead of replacing change-over-time context each run.
+- 2026-03-09: Added configurable `domain_weights` rollups plus critical-domain regression summaries driven by `.docgarden/config.yaml`, and surfaced the weighted rollup alongside raw domain scores in `QUALITY_SCORE.md`.
+- 2026-03-09: Added regression coverage for legacy `score.json` loading, weighted rollup calculation, persisted trend history across scans, and critical-domain drift reporting.
 
 ## Discoveries
 
@@ -154,6 +157,15 @@ spec sections to PR-sized implementation units.
 - Index routing quality cannot rely on AGENTS-style raw path extraction alone;
   the scanner also has to inspect resolved markdown links because most index
   docs route readers with relative links rather than repo-root path literals.
+- Trend state is easiest to keep honest when each scan stores a compact summary
+  point and reuses the previous score snapshot as input; that avoids inventing a
+  second history file just for score drift.
+- Domain weighting is more useful as an explicit config override than as an
+  inferred heuristic, because repo owners can choose which knowledge areas
+  should dominate the rollup while raw per-domain scores stay visible.
+- Critical-domain regressions need their own channel in both `score.json` and
+  `QUALITY_SCORE.md`; otherwise a small overall drift can hide a sharper drop in
+  a domain the repo considers operationally sensitive.
 
 ## Decision Log
 
@@ -203,6 +215,12 @@ spec sections to PR-sized implementation units.
 - 2026-03-09: Model S08 as a separate `stale-route` detector scoped to AGENTS
   and `index.md` current-truth routers, leaving `broken-route` focused on
   missing targets so route existence and route quality stay distinguishable.
+- 2026-03-09: Implement S09 by enriching the existing `score.json` snapshot
+  schema with trend points and rollup metadata, instead of adding a separate
+  trend artifact.
+- 2026-03-09: Treat `domain_weights` as config-driven optional overrides with a
+  default weight of `1` per domain, and keep raw domain scores visible in the
+  markdown report so the weighted rollup cannot hide weaker areas.
 
 ## Outcomes / Retrospective
 

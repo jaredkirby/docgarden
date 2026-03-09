@@ -3,6 +3,10 @@ strict_score_fail_threshold: 70
 critical_domains:
   - docs
   - exec-plans
+domain_weights:
+  docs: 4
+  exec-plans: 3
+  design-docs: 2
 review_defaults:
   canonical_review_cycle_days: 30
   workflow_review_cycle_days: 45

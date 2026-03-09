@@ -13,6 +13,7 @@ from docgarden.state import (
     append_finding_status_event,
     load_findings_history,
     load_plan,
+    load_score,
 )
 
 CANONICAL_FRONTMATTER = """---
@@ -177,6 +178,56 @@ Text.
     assert (paths.findings.read_text() if paths.findings.exists() else "") == baseline_findings
     assert paths.plan.read_text() == baseline_plan
     assert paths.score.read_text() == baseline_score
+
+
+def test_cli_scan_persists_score_trends_and_weighted_rollups(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    repo = make_repo(tmp_path)
+    write(
+        repo / ".docgarden" / "config.yaml",
+        """repo_name: test-docgarden
+strict_score_fail_threshold: 70
+critical_domains:
+  - docs
+domain_weights:
+  docs: 4
+""",
+    )
+    monkeypatch.chdir(repo)
+
+    assert main(["scan"]) == 0
+    capsys.readouterr()
+
+    first_score = load_score(repo_paths(repo).score)
+    assert first_score is not None
+    assert first_score.rollup["weighted_score"] == 100
+    assert len(first_score.trend["points"]) == 1
+
+    write(
+        repo / "docs" / "index.md",
+        CANONICAL_FRONTMATTER
+        + """
+# Docs Index
+
+## Purpose
+Text.
+""",
+    )
+
+    assert main(["scan"]) == 0
+    scan_output = json.loads(capsys.readouterr().out)
+    updated_score = load_score(repo_paths(repo).score)
+
+    assert scan_output["overall_score"] == 99
+    assert updated_score is not None
+    assert updated_score.rollup["weighted_score"] == 92
+    assert updated_score.rollup["weights"] == {"docs": 4}
+    assert updated_score.rollup["critical_regressions"] == [
+        {"domain": "docs", "score": 92, "previous_score": 100, "delta": -8}
+    ]
+    assert updated_score.trend["summary"]["weighted_rollup_delta"] == -8
+    assert len(updated_score.trend["points"]) == 2
 
 
 def test_cli_next_show_and_fix_safe_commands(tmp_path, monkeypatch, capsys) -> None:

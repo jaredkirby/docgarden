@@ -337,7 +337,7 @@ def load_score(path: Path) -> Scorecard | None:
     if not payload:
         return None
     try:
-        return Scorecard(**payload)
+        return Scorecard.from_dict(payload)
     except TypeError as exc:
         raise StateError(
             f"Invalid score state at {path}: payload does not match Scorecard."

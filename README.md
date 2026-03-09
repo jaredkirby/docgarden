@@ -163,6 +163,8 @@ The repo currently includes:
 - workflow drift checks for missing repo-owned local assets in workflow-style
   sections
 - quality scoring and score publication
+- persisted score trend points, configurable domain-weighted rollups, and
+  critical-domain regression summaries
 - append-only findings history and a prioritized plan view
 - plan triage stages with persisted notes
 - manual queue focus, resolve, and reopen commands
@@ -171,4 +173,4 @@ The repo currently includes:
 - a Codex worker/reviewer loop that can continue until a slice is accepted or
   blocked
 
-Next planned slice: score trend and weighted domain rollups.
+Next planned slice: review packet preparation and import.

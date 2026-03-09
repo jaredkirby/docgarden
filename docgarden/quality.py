@@ -19,12 +19,127 @@ DIMENSION_WEIGHTS = {
 }
 
 SEVERITY_PENALTIES = {"low": 3, "medium": 8, "high": 15}
+TREND_POINT_LIMIT = 20
+FINDING_SEVERITY_ORDER = {"high": 0, "medium": 1, "low": 2}
+
+
+def _score_delta(previous: int | None, current: int) -> int | None:
+    if previous is None:
+        return None
+    return current - previous
+
+
+def _format_delta(delta: int | None) -> str:
+    if delta is None:
+        return "n/a"
+    if delta > 0:
+        return f"+{delta}"
+    return str(delta)
+
+
+def _domain_score(domain_payload: dict[str, Any] | None) -> int | None:
+    if not isinstance(domain_payload, dict):
+        return None
+    score = domain_payload.get("score")
+    return score if isinstance(score, int) else None
+
+
+def _weighted_rollup(
+    domains: dict[str, dict[str, Any]],
+    domain_weights: dict[str, int | float] | None,
+) -> tuple[int, int, dict[str, int | float]]:
+    configured_weights = domain_weights or {}
+    weights_used: dict[str, int | float] = {}
+    weighted_total = 0.0
+    total_weight = 0.0
+    raw_scores: list[int] = []
+
+    for domain, payload in sorted(domains.items()):
+        score = _domain_score(payload)
+        if score is None:
+            continue
+        weight = configured_weights.get(domain, 1)
+        if not isinstance(weight, (int, float)) or weight < 0:
+            weight = 1
+        weights_used[domain] = weight
+        raw_scores.append(score)
+        if weight == 0:
+            continue
+        weighted_total += score * weight
+        total_weight += weight
+
+    raw_average = round(sum(raw_scores) / len(raw_scores)) if raw_scores else 100
+    if total_weight <= 0:
+        return raw_average, raw_average, weights_used
+    return round(weighted_total / total_weight), raw_average, weights_used
+
+
+def _trend_points(previous_score: Scorecard | None) -> list[dict[str, Any]]:
+    if previous_score is None:
+        return []
+    trend = previous_score.trend if isinstance(previous_score.trend, dict) else {}
+    points = trend.get("points")
+    if not isinstance(points, list):
+        return []
+    return [point for point in points if isinstance(point, dict)]
+
+
+def _previous_weighted_rollup(
+    previous_score: Scorecard | None,
+    domain_weights: dict[str, int | float] | None,
+) -> int | None:
+    if previous_score is None:
+        return None
+    weighted_score = previous_score.rollup.get("weighted_score")
+    if isinstance(weighted_score, int):
+        return weighted_score
+    previous_domains = (
+        previous_score.domains if isinstance(previous_score.domains, dict) else {}
+    )
+    computed_weighted_score, _, _ = _weighted_rollup(previous_domains, domain_weights)
+    return computed_weighted_score
+
+
+def _critical_regressions(
+    *,
+    current_domains: dict[str, dict[str, Any]],
+    previous_score: Scorecard | None,
+    critical_domains: list[str] | None,
+) -> list[dict[str, Any]]:
+    if previous_score is None or not critical_domains:
+        return []
+
+    regressions: list[dict[str, Any]] = []
+    previous_domains = (
+        previous_score.domains if isinstance(previous_score.domains, dict) else {}
+    )
+    for domain in critical_domains:
+        current_score = _domain_score(current_domains.get(domain))
+        previous_domain_score = _domain_score(previous_domains.get(domain))
+        if current_score is None or previous_domain_score is None:
+            continue
+        if current_score >= previous_domain_score:
+            continue
+        regressions.append(
+            {
+                "domain": domain,
+                "score": current_score,
+                "previous_score": previous_domain_score,
+                "delta": current_score - previous_domain_score,
+            }
+        )
+    regressions.sort(key=lambda item: (item["delta"], item["domain"]))
+    return regressions
 
 
 def build_scorecard(
     findings: list[Finding],
     domain_doc_counts: dict[str, int],
     now: datetime,
+    *,
+    previous_score: Scorecard | None = None,
+    critical_domains: list[str] | None = None,
+    domain_weights: dict[str, int | float] | None = None,
 ) -> Scorecard:
     by_dimension: dict[str, list[Finding]] = defaultdict(list)
     by_domain: dict[str, list[Finding]] = defaultdict(list)
@@ -101,11 +216,46 @@ def build_scorecard(
         for finding in sorted(
             findings,
             key=lambda item: (
-                {"high": 0, "medium": 1, "low": 2}.get(item.severity, 3),
+                FINDING_SEVERITY_ORDER.get(item.severity, 3),
                 item.id,
             ),
         )[:5]
     ]
+
+    weighted_rollup, raw_average, weights_used = _weighted_rollup(
+        domains,
+        domain_weights,
+    )
+    critical_regressions = _critical_regressions(
+        current_domains=domains,
+        previous_score=previous_score,
+        critical_domains=critical_domains,
+    )
+    previous_weighted_rollup = _previous_weighted_rollup(previous_score, domain_weights)
+
+    trend_points = _trend_points(previous_score)
+    trend_points.append(
+        {
+            "updated_at": now.isoformat(timespec="seconds"),
+            "overall_score": overall,
+            "strict_score": strict,
+            "weighted_domain_rollup": weighted_rollup,
+            "critical_regressions": [item["domain"] for item in critical_regressions],
+        }
+    )
+    trend_points = trend_points[-TREND_POINT_LIMIT:]
+
+    trend_summary = {
+        "overall_delta": _score_delta(
+            previous_score.overall_score if previous_score is not None else None,
+            overall,
+        ),
+        "strict_delta": _score_delta(
+            previous_score.strict_score if previous_score is not None else None,
+            strict,
+        ),
+        "weighted_rollup_delta": _score_delta(previous_weighted_rollup, weighted_rollup),
+    }
 
     return Scorecard(
         updated_at=now.isoformat(timespec="seconds"),
@@ -114,11 +264,22 @@ def build_scorecard(
         dimensions=dimensions,
         domains=domains,
         top_gaps=top_gaps,
-        trend={"points": []},
+        trend={"points": trend_points, "summary": trend_summary},
+        rollup={
+            "weighted_score": weighted_rollup,
+            "raw_average_score": raw_average,
+            "weights": weights_used,
+            "critical_regressions": critical_regressions,
+        },
     )
 
 
 def render_quality_markdown(scorecard: Scorecard) -> str:
+    trend_summary = scorecard.trend.get("summary", {})
+    weighted_rollup = scorecard.rollup.get("weighted_score")
+    raw_average_score = scorecard.rollup.get("raw_average_score")
+    critical_regressions = scorecard.rollup.get("critical_regressions", [])
+
     lines = [
         "# Quality Score",
         "",
@@ -127,11 +288,70 @@ def render_quality_markdown(scorecard: Scorecard) -> str:
         "## Repo Summary",
         f"- Overall: {scorecard.overall_score}",
         f"- Strict: {scorecard.strict_score}",
+        f"- Weighted domain rollup: {weighted_rollup}",
+        f"- Raw domain average: {raw_average_score}",
+        (
+            "- Overall drift vs previous scan: "
+            f"{_format_delta(trend_summary.get('overall_delta'))}"
+        ),
+        (
+            "- Strict drift vs previous scan: "
+            f"{_format_delta(trend_summary.get('strict_delta'))}"
+        ),
+        (
+            "- Weighted rollup drift vs previous scan: "
+            f"{_format_delta(trend_summary.get('weighted_rollup_delta'))}"
+        ),
         "",
-        "## Domains",
+        "## Critical-Domain Regressions",
     ]
+    if critical_regressions:
+        for item in critical_regressions:
+            lines.append(
+                "- "
+                f"{item['domain']}: {item['score']} "
+                f"({_format_delta(item['delta'])} from {item['previous_score']})"
+            )
+    else:
+        lines.append("- None in this scan.")
+
+    lines.extend(
+        [
+            "",
+            "## Trend",
+        ]
+    )
+    recent_points = scorecard.trend.get("points", [])
+    if recent_points:
+        for point in recent_points[-5:]:
+            regressions = point.get("critical_regressions") or []
+            regression_summary = (
+                f"; critical regressions: {', '.join(regressions)}"
+                if regressions
+                else ""
+            )
+            lines.append(
+                "- "
+                f"{str(point.get('updated_at', ''))}: "
+                f"overall {point.get('overall_score')}, "
+                f"strict {point.get('strict_score')}, "
+                f"weighted rollup {point.get('weighted_domain_rollup')}"
+                f"{regression_summary}"
+            )
+    else:
+        lines.append("- No trend points yet.")
+
+    lines.extend(
+        [
+            "",
+            "## Domains",
+        ]
+    )
     for domain, data in sorted(scorecard.domains.items()):
-        lines.append(f"- {domain}: {data['score']} ({data['status']})")
+        weight = scorecard.rollup.get("weights", {}).get(domain, 1)
+        lines.append(
+            f"- {domain}: {data['score']} ({data['status']}, weight: {weight})"
+        )
     lines.extend(["", "## Top Gaps"])
     if scorecard.top_gaps:
         for index, gap in enumerate(scorecard.top_gaps, start=1):
