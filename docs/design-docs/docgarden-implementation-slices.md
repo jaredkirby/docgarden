@@ -65,8 +65,8 @@ criteria rather than re-explaining the whole product vision.
 | Slice | Status | Goal | Depends on |
 | --- | --- | --- | --- |
 | S00 | completed | Mechanical doc scan foundation | none |
-| S01 | active | First alignment checks | S00 |
-| S02 | queued | Findings lifecycle with attestation-ready state | S00 |
+| S01 | completed | First alignment checks | S00 |
+| S02 | completed | Findings lifecycle with attestation-ready state | S00 |
 | S03 | queued | Plan triage commands and lifecycle stages | S02 |
 | S04 | queued | Focus and resolve queue operations | S02, S03 |
 | S05 | queued | Changed-scope scans | S00 |
@@ -89,10 +89,12 @@ The repo has already shipped the Phase 1 core:
 - score publication to `docs/QUALITY_SCORE.md`
 - narrow safe autofix for stale status and missing headings
 
-The repo has also started Phase 2:
+The repo has also completed the first two generic Phase 2 slices:
 
 - missing local `source_of_truth` artifact checks
 - unsupported `docgarden` validation command checks on non-draft docs
+- findings lifecycle statuses beyond `open` and `fixed`
+- attestation-ready status metadata in append-only findings history
 
 ## Atomic slices
 
@@ -118,7 +120,7 @@ Acceptance:
 
 ### S01: First alignment checks
 
-Status: `active`
+Status: `completed`
 
 Goal:
 - Start giving the "Alignment to artifacts" score real signal.
@@ -137,7 +139,7 @@ Acceptance:
 
 ### S02: Findings lifecycle and attestation-ready state
 
-Status: `queued`
+Status: `completed`
 
 Goal:
 - Expand the finding event model so non-trivial resolution can be tracked

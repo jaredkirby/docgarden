@@ -10,7 +10,10 @@ import yaml
 FRONTMATTER_BOUNDARY = "---"
 MARKDOWN_LINK_RE = re.compile(r"\[[^\]]+\]\(([^)]+)\)")
 HEADING_RE = re.compile(r"^(#{1,6})\s+(.+?)\s*$", re.MULTILINE)
-ROUTE_RE = re.compile(r"(?P<path>(?:AGENTS\.md|docs/[A-Za-z0-9_./-]+(?:\.md)?))")
+ROUTE_RE = re.compile(
+    r"(?<![A-Za-z0-9_./-])"
+    r"(?P<path>(?:AGENTS\.md|docs/[A-Za-z0-9_./-]+(?:\.md)?))"
+)
 
 
 @dataclass(slots=True)

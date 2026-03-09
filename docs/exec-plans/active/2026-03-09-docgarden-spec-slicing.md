@@ -60,6 +60,7 @@ spec sections to PR-sized implementation units.
 - 2026-03-09: Created the first atomic-slices backlog for the full spec.
 - 2026-03-09: Routed the backlog from the design-doc and plan indexes.
 - 2026-03-09: Added reusable implementation and PM-review prompts for S01 and S02 handoff.
+- 2026-03-09: Refreshed the backlog and prompt pack after confirming S01 and S02 were completed in code.
 
 ## Discoveries
 
@@ -69,6 +70,8 @@ spec sections to PR-sized implementation units.
   instead of disappearing from the sequence.
 - Review prompts are easier to keep honest when they are slice-scoped rather
   than asking for a generic “does this match the spec?” pass.
+- The branch advanced faster than the docs, so the durable slice backlog needs
+  occasional re-sync against the actual implementation state.
 
 ## Decision Log
 

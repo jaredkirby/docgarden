@@ -47,15 +47,17 @@ implementation work from spec-conformance review work.
 - `implementation prompt`: for the agent expected to change code and tests.
 - `PM review prompt`: for an agent acting like a product/technical reviewer that
   checks whether the implementation matches the spec and the intended slice.
-- `first agent`: the implementation agent finishing or verifying S01.
-- `next agent`: the implementation agent starting S02 after S01 is confirmed.
+- `completed slice review`: a review pass against a slice that is already
+  believed to be shipped.
+- `next agent`: the implementation agent starting the next queued slice after
+  S02.
 
 ## Prompt pack
 
-### 1. Implementation kickoff for the next agent after S01
+### 1. Implementation kickoff for the next agent after S02
 
-Use this when S01 has already been completed, reviewed, and either committed or
-otherwise accepted as the current baseline.
+Use this when S01 and S02 have already been completed, reviewed, and accepted as
+the current baseline.
 
 ```text
 You’re implementing the next docgarden slice in /Users/kirby/Projects/docgarden.
@@ -65,39 +67,30 @@ Start by reading:
 - docs/design-docs/docgarden-spec.md
 - docs/exec-plans/active/2026-03-09-docgarden-spec-slicing.md
 
-Your target slice is S02: “Findings lifecycle and attestation-ready state”.
+Your target slice is S03: “Plan triage commands and lifecycle stages”.
 
 Primary goal:
-- expand the finding event model so non-trivial resolution can be tracked
-  honestly without breaking append-only history
+- turn the current passive plan file into an explicit workflow stage machine
+  without mutating findings history
 
 Required changes:
-1. Update the finding/state model to support statuses beyond open/fixed:
-   - in_progress
-   - accepted_debt
-   - needs_human
-   - false_positive
-2. Add attestation-ready resolution metadata such as:
-   - attestation
-   - resolved_by
-   - resolution_note
-   - resolved_at
-3. Preserve append-only semantics in findings.jsonl.
-4. Keep backward compatibility with existing findings history.
-5. Make sure scoring semantics remain correct:
-   - overall_score excludes accepted_debt
-   - strict_score still counts accepted_debt
+1. Add `docgarden plan triage --stage observe --report ...`.
+2. Add `docgarden plan triage --stage reflect --report ...`.
+3. Add `docgarden plan triage --stage organize --report ...`.
+4. Persist stage notes and lifecycle stage in `plan.json`.
+5. Surface the current stage and stored notes via `docgarden plan`.
+6. Keep findings history append-only and separate from plan-state changes.
 
 Likely files:
-- docgarden/models.py
+- docgarden/cli.py
+- docgarden/cli_commands.py
 - docgarden/state.py
-- docgarden/quality.py
+- docgarden/models.py
+- tests/test_cli.py
 - tests/test_support_modules.py
-- tests/test_cli.py if command behavior changes
 
 Working style:
-- keep this slice tight; do not jump ahead into S03 plan-triage CLI unless it is
-  absolutely required to complete S02 correctly
+- keep this slice tight; do not jump ahead into S04 focus/resolve commands
 - do not revert unrelated user changes
 - if the current worktree contains unrelated dirty files, work around them
   carefully and commit only your touched paths
@@ -111,17 +104,19 @@ Documentation:
   discoveries, and decision log
 
 Definition of done:
-- event history can represent observation plus manual resolution metadata
-- tests cover both backward compatibility and new status behavior
+- triage commands update plan state without mutating findings history
+- `plan.json` can hold stage notes and strategy text
+- tests cover stage transitions and validation failures
 - repo scan remains clean after the change
 
 Commit:
 - make an atomic commit with only the files you touched
 ```
 
-### 2. PM review prompt for the first agent’s work against S01
+### 2. PM review prompt for the completed S01 work
 
-Use this after the implementation agent finishes the first alignment slice.
+Use this when you want a product/spec review of the shipped first alignment
+slice.
 
 ```text
 Act as a PM-style reviewer for the docgarden spec implementation in
@@ -169,9 +164,10 @@ Be strict about scope:
   breaks S01 itself
 ```
 
-### 3. PM review prompt for the next agent’s work against S02
+### 3. PM review prompt for the completed S02 work
 
-Use this after the next implementation agent finishes S02.
+Use this when you want a product/spec review of the shipped findings-lifecycle
+slice.
 
 ```text
 Act as a PM-style reviewer for the docgarden spec implementation in
@@ -215,10 +211,59 @@ Deliverable:
 - end with a short recommendation:
   - ready for next slice
   - revise before next slice
-  - blocked pending product clarification
+- blocked pending product clarification
 
 Do not grade the work on later-slice features unless their absence creates a
 real product risk for S02.
+```
+
+### 4. PM review prompt for the next agent’s work against S03
+
+Use this after the next implementation agent finishes S03.
+
+```text
+Act as a PM-style reviewer for the docgarden spec implementation in
+/Users/kirby/Projects/docgarden.
+
+You are reviewing the implementation of S03: “Plan triage commands and
+lifecycle stages”.
+
+Read first:
+- docs/design-docs/docgarden-spec.md
+- docs/design-docs/docgarden-implementation-slices.md
+- docs/exec-plans/active/2026-03-09-docgarden-spec-slicing.md
+
+Review the implementation specifically against the S03 slice definition.
+
+Questions to answer:
+1. Did the implementation add the intended triage workflow stages:
+   - observe
+   - reflect
+   - organize
+2. Can users record stage reports without mutating findings history?
+3. Does `plan.json` now carry meaningful lifecycle-stage information and
+   stage-specific notes?
+4. Does `docgarden plan` surface the current stage and enough stored context to
+   guide the next operator?
+5. Did the implementation stay within the S03 boundary, or did it drift into S04
+   focus/resolve workflow prematurely?
+6. Are the command UX and error messages clear enough for repeatable use?
+
+Deliverable:
+- list findings first, ordered by severity
+- classify each issue as:
+  - spec mismatch
+  - product ambiguity
+  - implementation risk
+  - testing/documentation gap
+- explicitly call out any hidden product decisions not stated in the slice
+- end with a short recommendation:
+  - ready for S04
+  - revise before S04
+  - blocked pending product clarification
+
+Do not require focus/resolve behavior unless the lack of it prevents S03 from
+being useful on its own.
 ```
 
 ## Exceptions / Caveats

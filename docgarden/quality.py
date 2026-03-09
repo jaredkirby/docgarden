@@ -40,6 +40,8 @@ def build_scorecard(
         "orphan-doc": "Linking & discoverability",
         "verified-without-sources": "Verification & trust",
         "invalid-metadata": "Structure & metadata",
+        "missing-source-artifact": "Alignment to artifacts",
+        "invalid-validation-command": "Alignment to artifacts",
     }
 
     for finding in findings:
