@@ -49,7 +49,7 @@ and how multi-step work should be tracked.
 
 ## Validation / How to verify
 
-- Run `docgarden scan --scope all`.
+- Run `docgarden scan`.
 - Confirm routed files exist and remain current.
 
 ## Related docs
@@ -57,3 +57,4 @@ and how multi-step work should be tracked.
 - [QUALITY_SCORE.md](QUALITY_SCORE.md)
 - [PLANS.md](PLANS.md)
 - [Docgarden MVP exec plan](exec-plans/active/2026-03-08-docgarden-mvp.md)
+- [Desloppify code health exec plan](exec-plans/active/2026-03-08-desloppify-code-health.md)

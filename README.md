@@ -7,7 +7,7 @@ findings, and offers a narrow safe-fix path for mechanical hygiene issues.
 ## Commands
 
 ```bash
-docgarden scan --scope all
+docgarden scan
 docgarden status
 docgarden next
 docgarden plan

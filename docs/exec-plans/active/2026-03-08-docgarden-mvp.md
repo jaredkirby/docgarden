@@ -48,7 +48,7 @@ code and enough documentation structure to validate against.
 ## Validation
 
 - `python -m pytest`
-- `python -m docgarden.cli scan --scope all`
+- `python -m docgarden.cli scan`
 - `python -m docgarden.cli quality write`
 
 ## Progress
