@@ -9,6 +9,9 @@ from .cli_commands import (
     command_fix_safe,
     command_next,
     command_plan,
+    command_plan_focus,
+    command_plan_reopen,
+    command_plan_resolve,
     command_plan_triage,
     command_quality_write,
     command_scan,
@@ -16,6 +19,7 @@ from .cli_commands import (
     command_status,
 )
 from .errors import DocgardenError
+from .models import PLAN_RESOLVE_FINDING_STATUSES
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -42,6 +46,21 @@ def build_parser() -> argparse.ArgumentParser:
     )
     plan_triage.add_argument("--report", required=True)
     plan_triage.set_defaults(func=command_plan_triage)
+    plan_focus = plan_subparsers.add_parser("focus")
+    plan_focus.add_argument("target")
+    plan_focus.set_defaults(func=command_plan_focus)
+    plan_resolve = plan_subparsers.add_parser("resolve")
+    plan_resolve.add_argument("finding_id")
+    plan_resolve.add_argument(
+        "--result",
+        choices=PLAN_RESOLVE_FINDING_STATUSES,
+        required=True,
+    )
+    plan_resolve.add_argument("--attest")
+    plan_resolve.set_defaults(func=command_plan_resolve)
+    plan_reopen = plan_subparsers.add_parser("reopen")
+    plan_reopen.add_argument("finding_id")
+    plan_reopen.set_defaults(func=command_plan_reopen)
 
     show = subparsers.add_parser("show")
     show.add_argument("finding_id")

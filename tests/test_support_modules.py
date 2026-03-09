@@ -34,7 +34,10 @@ from docgarden.state import (
     load_findings_history,
     load_plan,
     ordered_active_events,
+    record_plan_resolution,
     record_plan_triage_stage,
+    reopen_plan_finding,
+    set_plan_focus,
     write_json,
 )
 
@@ -395,6 +398,261 @@ def test_build_plan_preserves_notes_and_restarts_complete_cycle_on_new_findings(
     assert plan.lifecycle_stage == "observe"
     assert plan.stage_notes == {"organize": "Prior queue was already shaped."}
     assert plan.strategy_text == "Resume with the highest-signal doc cluster."
+
+
+def test_set_plan_focus_updates_current_focus_for_id_and_cluster(tmp_path) -> None:
+    state_dir = tmp_path / ".docgarden"
+    ensure_state_dirs(state_dir)
+    findings_path = state_dir / "findings.jsonl"
+    plan_path = state_dir / "plan.json"
+
+    context = FindingContext(
+        rel_path="docs/index.md",
+        domain="docs",
+        discovered_at="2026-03-08T12:00:00",
+    )
+    alpha = Finding.open_issue(
+        context,
+        kind="missing-sections",
+        severity="medium",
+        summary="Missing headings.",
+        evidence=["Missing headings: Scope"],
+        recommended_action="Add the missing section.",
+        safe_to_autofix=True,
+        cluster="cluster/alpha",
+        suffix="alpha",
+    )
+    beta = Finding.open_issue(
+        context,
+        kind="stale-review",
+        severity="high",
+        summary="Review date is stale.",
+        evidence=["last_reviewed is older than the review cycle."],
+        recommended_action="Review the doc and refresh last_reviewed.",
+        safe_to_autofix=False,
+        cluster="cluster/beta",
+        suffix="beta",
+    )
+
+    append_scan_events(findings_path, [alpha, beta], datetime(2026, 3, 8, 12, 0, 0))
+    plan = build_plan([alpha, beta], "abc123", datetime(2026, 3, 8, 12, 5, 0))
+    write_json(plan_path, asdict(plan))
+
+    focused_by_id = set_plan_focus(
+        plan_path,
+        findings_path,
+        target=alpha.id,
+        updated_at=datetime(2026, 3, 8, 12, 10, 0),
+    )
+    assert focused_by_id.current_focus == alpha.id
+
+    focused_by_cluster = set_plan_focus(
+        plan_path,
+        findings_path,
+        target="cluster/beta",
+        updated_at=datetime(2026, 3, 8, 12, 15, 0),
+    )
+    assert focused_by_cluster.current_focus == beta.id
+
+
+def test_set_plan_focus_validates_unknown_targets(tmp_path) -> None:
+    state_dir = tmp_path / ".docgarden"
+    ensure_state_dirs(state_dir)
+    findings_path = state_dir / "findings.jsonl"
+    plan_path = state_dir / "plan.json"
+
+    context = FindingContext(
+        rel_path="docs/index.md",
+        domain="docs",
+        discovered_at="2026-03-08T12:00:00",
+    )
+    finding = Finding.open_issue(
+        context,
+        kind="missing-sections",
+        severity="medium",
+        summary="Missing headings.",
+        evidence=["Missing headings: Scope"],
+        recommended_action="Add the missing section.",
+        safe_to_autofix=True,
+        cluster="structure-gaps",
+        suffix="sections",
+    )
+
+    append_scan_events(findings_path, [finding], datetime(2026, 3, 8, 12, 0, 0))
+    write_json(
+        plan_path,
+        asdict(build_plan([finding], "abc123", datetime(2026, 3, 8, 12, 5, 0))),
+    )
+
+    try:
+        set_plan_focus(
+            plan_path,
+            findings_path,
+            target="missing-cluster",
+            updated_at=datetime(2026, 3, 8, 12, 10, 0),
+        )
+    except StateError as exc:
+        assert str(exc) == "Unknown focus target: missing-cluster."
+    else:
+        raise AssertionError("Expected invalid focus target validation to fail.")
+
+
+def test_record_plan_resolution_appends_event_and_advances_focus(tmp_path) -> None:
+    state_dir = tmp_path / ".docgarden"
+    ensure_state_dirs(state_dir)
+    findings_path = state_dir / "findings.jsonl"
+    plan_path = state_dir / "plan.json"
+
+    alpha_context = FindingContext(
+        rel_path="docs/alpha.md",
+        domain="docs",
+        discovered_at="2026-03-08T12:00:00",
+    )
+    beta_context = FindingContext(
+        rel_path="docs/beta.md",
+        domain="docs",
+        discovered_at="2026-03-08T12:00:00",
+    )
+    alpha = Finding.open_issue(
+        alpha_context,
+        kind="stale-review",
+        severity="high",
+        summary="Review date is stale.",
+        evidence=["Alpha is past review."],
+        recommended_action="Refresh the doc review.",
+        safe_to_autofix=False,
+        cluster="freshness",
+        suffix="alpha",
+    )
+    beta = Finding.open_issue(
+        beta_context,
+        kind="stale-review",
+        severity="medium",
+        summary="Review date is stale.",
+        evidence=["Beta is past review."],
+        recommended_action="Refresh the doc review.",
+        safe_to_autofix=False,
+        cluster="freshness",
+        suffix="beta",
+    )
+
+    append_scan_events(findings_path, [alpha, beta], datetime(2026, 3, 8, 12, 0, 0))
+    write_json(
+        plan_path,
+        asdict(build_plan([alpha, beta], "abc123", datetime(2026, 3, 8, 12, 5, 0))),
+    )
+    before_lines = findings_path.read_text().splitlines()
+
+    event, updated_plan = record_plan_resolution(
+        plan_path,
+        findings_path,
+        alpha.id,
+        status="fixed",
+        event_at=datetime(2026, 3, 8, 12, 10, 0),
+        resolved_by="kirby",
+    )
+
+    after_lines = findings_path.read_text().splitlines()
+    assert len(after_lines) == len(before_lines) + 1
+    assert json.loads(after_lines[-1])["status"] == "fixed"
+    assert event["event"] == "status_changed"
+    assert updated_plan.current_focus == beta.id
+
+
+def test_record_plan_resolution_requires_attestation_for_non_trivial_results(
+    tmp_path,
+) -> None:
+    state_dir = tmp_path / ".docgarden"
+    ensure_state_dirs(state_dir)
+    findings_path = state_dir / "findings.jsonl"
+    plan_path = state_dir / "plan.json"
+
+    context = FindingContext(
+        rel_path="docs/index.md",
+        domain="docs",
+        discovered_at="2026-03-08T12:00:00",
+    )
+    finding = Finding.open_issue(
+        context,
+        kind="missing-sections",
+        severity="medium",
+        summary="Missing headings.",
+        evidence=["Missing headings: Scope"],
+        recommended_action="Add the missing section.",
+        safe_to_autofix=True,
+        cluster="structure-gaps",
+        suffix="sections",
+    )
+
+    append_scan_events(findings_path, [finding], datetime(2026, 3, 8, 12, 0, 0))
+    write_json(
+        plan_path,
+        asdict(build_plan([finding], "abc123", datetime(2026, 3, 8, 12, 5, 0))),
+    )
+
+    try:
+        record_plan_resolution(
+            plan_path,
+            findings_path,
+            finding.id,
+            status="needs_human",
+            event_at=datetime(2026, 3, 8, 12, 10, 0),
+        )
+    except StateError as exc:
+        assert str(exc) == "Status needs_human requires a non-empty attestation."
+    else:
+        raise AssertionError("Expected attestation validation to fail.")
+
+
+def test_reopen_plan_finding_reopens_resolved_event_and_refocuses(tmp_path) -> None:
+    state_dir = tmp_path / ".docgarden"
+    ensure_state_dirs(state_dir)
+    findings_path = state_dir / "findings.jsonl"
+    plan_path = state_dir / "plan.json"
+
+    context = FindingContext(
+        rel_path="docs/index.md",
+        domain="docs",
+        discovered_at="2026-03-08T12:00:00",
+    )
+    finding = Finding.open_issue(
+        context,
+        kind="missing-sections",
+        severity="medium",
+        summary="Missing headings.",
+        evidence=["Missing headings: Scope"],
+        recommended_action="Add the missing section.",
+        safe_to_autofix=True,
+        cluster="structure-gaps",
+        suffix="sections",
+    )
+
+    append_scan_events(findings_path, [finding], datetime(2026, 3, 8, 12, 0, 0))
+    write_json(
+        plan_path,
+        asdict(build_plan([finding], "abc123", datetime(2026, 3, 8, 12, 5, 0))),
+    )
+    record_plan_resolution(
+        plan_path,
+        findings_path,
+        finding.id,
+        status="false_positive",
+        event_at=datetime(2026, 3, 8, 12, 10, 0),
+        attestation="Confirmed locally that this detector fired incorrectly.",
+    )
+
+    event, updated_plan = reopen_plan_finding(
+        plan_path,
+        findings_path,
+        finding.id,
+        event_at=datetime(2026, 3, 8, 12, 15, 0),
+        resolved_by="kirby",
+    )
+
+    assert event["status"] == "open"
+    assert event["resolved_at"] is None
+    assert updated_plan.current_focus == finding.id
+    assert latest_events_by_id(load_findings_history(findings_path))[finding.id]["status"] == "open"
 
 
 def test_state_helpers_preserve_manual_status_metadata_across_scans(tmp_path) -> None:

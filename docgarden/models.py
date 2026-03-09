@@ -26,6 +26,16 @@ ATTESTATION_REQUIRED_FINDING_STATUSES = frozenset(
     {"accepted_debt", "needs_human", "false_positive"}
 )
 RESOLVED_FINDING_STATUSES = frozenset({"fixed", "accepted_debt", "false_positive"})
+PLAN_RESOLVE_FINDING_STATUSES = (
+    "in_progress",
+    "fixed",
+    "accepted_debt",
+    "needs_human",
+    "false_positive",
+)
+REOPENABLE_FINDING_STATUSES = frozenset(
+    {"fixed", "accepted_debt", "false_positive"}
+)
 PLAN_LIFECYCLE_STAGES = frozenset({"observe", "reflect", "organize", "complete"})
 TRIAGE_LIFECYCLE_STAGES = ("observe", "reflect", "organize")
 

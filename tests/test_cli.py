@@ -8,7 +8,11 @@ from pathlib import Path
 from docgarden.cli import main
 from docgarden.cli_commands import repo_paths
 from docgarden.scan_workflow import run_scan
-from docgarden.state import append_finding_status_event, load_plan
+from docgarden.state import (
+    append_finding_status_event,
+    load_findings_history,
+    load_plan,
+)
 
 CANONICAL_FRONTMATTER = """---
 doc_id: docs-index
@@ -533,6 +537,269 @@ Text.
         "Cannot move plan triage from observe to organize; allowed stages: observe, reflect."
         in captured.err
     )
+
+
+def test_cli_plan_focus_updates_current_focus_by_id_and_cluster(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    repo = make_repo(tmp_path)
+    write(
+        repo / "docs" / "stale.md",
+        CANONICAL_FRONTMATTER.replace("docs-index", "stale-doc").replace(
+            "2026-03-08", "2026-01-01"
+        )
+        + """
+# Stale Doc
+
+## Purpose
+Text.
+
+## Scope
+Text.
+
+## Source of Truth
+Text.
+
+## Rules / Definitions
+Text.
+
+## Exceptions / Caveats
+Text.
+
+## Validation / How to verify
+Text.
+
+## Related docs
+Text.
+""",
+    )
+    write(
+        repo / "docs" / "partial.md",
+        CANONICAL_FRONTMATTER.replace("docs-index", "partial-doc")
+        + """
+# Partial Doc
+""",
+    )
+    monkeypatch.chdir(repo)
+
+    assert main(["scan"]) == 0
+    capsys.readouterr()
+
+    paths = repo_paths(repo)
+    original_plan = load_plan(paths.plan)
+    partial_id = next(
+        finding_id
+        for finding_id in original_plan.ordered_findings
+        if "docs::partial.md" in finding_id
+    )
+    stale_id = next(
+        finding_id
+        for finding_id in original_plan.ordered_findings
+        if "docs::stale.md" in finding_id
+    )
+    stale_cluster = next(
+        cluster_name
+        for cluster_name, finding_ids in original_plan.clusters.items()
+        if stale_id in finding_ids
+    )
+
+    assert main(["plan", "focus", partial_id]) == 0
+    focused_by_id = json.loads(capsys.readouterr().out)
+    assert focused_by_id["current_focus"] == partial_id
+
+    assert main(["next"]) == 0
+    next_payload = json.loads(capsys.readouterr().out)
+    assert next_payload["id"] == partial_id
+
+    assert main(["plan", "focus", stale_cluster]) == 0
+    focused_by_cluster = json.loads(capsys.readouterr().out)
+    assert focused_by_cluster["current_focus"] == stale_id
+
+    assert main(["next"]) == 0
+    next_payload = json.loads(capsys.readouterr().out)
+    assert next_payload["id"] == stale_id
+
+
+def test_cli_plan_resolve_appends_event_and_advances_focus(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    repo = make_repo(tmp_path)
+    for name in ("alpha", "beta"):
+        write(
+            repo / "docs" / f"{name}.md",
+            CANONICAL_FRONTMATTER.replace("docs-index", f"{name}-doc").replace(
+                "2026-03-08", "2026-01-01"
+            )
+            + f"""
+# {name.title()} Doc
+
+## Purpose
+Text.
+
+## Scope
+Text.
+
+## Source of Truth
+Text.
+
+## Rules / Definitions
+Text.
+
+## Exceptions / Caveats
+Text.
+
+## Validation / How to verify
+Text.
+
+## Related docs
+Text.
+""",
+        )
+    monkeypatch.chdir(repo)
+
+    assert main(["scan"]) == 0
+    capsys.readouterr()
+
+    paths = repo_paths(repo)
+    original_plan = load_plan(paths.plan)
+    focus_id = original_plan.current_focus
+    assert focus_id is not None
+    other_id = next(
+        finding_id
+        for finding_id in original_plan.ordered_findings
+        if finding_id != focus_id
+    )
+    before_history = paths.findings.read_text().splitlines()
+
+    assert main(["plan", "resolve", focus_id, "--result", "fixed"]) == 0
+    resolve_output = json.loads(capsys.readouterr().out)
+    assert resolve_output["event"]["status"] == "fixed"
+    assert resolve_output["event"]["event"] == "status_changed"
+    assert resolve_output["plan"]["current_focus"] == other_id
+
+    after_history = paths.findings.read_text().splitlines()
+    assert len(after_history) == len(before_history) + 1
+    assert json.loads(after_history[-1])["id"] == focus_id
+    assert json.loads(after_history[-1])["status"] == "fixed"
+
+    assert main(["show", focus_id]) == 0
+    show_payload = json.loads(capsys.readouterr().out)
+    assert show_payload["status"] == "fixed"
+
+    assert main(["next"]) == 0
+    next_payload = json.loads(capsys.readouterr().out)
+    assert next_payload["id"] == other_id
+
+
+def test_cli_plan_resolve_requires_attestation_and_reopen_restores_queue(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    repo = make_repo(tmp_path)
+    write(
+        repo / "docs" / "index.md",
+        CANONICAL_FRONTMATTER
+        + """
+# Docs Index
+
+See [Stale](stale.md).
+
+## Purpose
+Text.
+
+## Scope
+Text.
+
+## Source of Truth
+Text.
+
+## Rules / Definitions
+Text.
+
+## Exceptions / Caveats
+Text.
+
+## Validation / How to verify
+Text.
+
+## Related docs
+Text.
+""",
+    )
+    write(
+        repo / "docs" / "stale.md",
+        CANONICAL_FRONTMATTER.replace("docs-index", "stale-doc").replace(
+            "2026-03-08", "2026-01-01"
+        )
+        + """
+# Stale Doc
+
+## Purpose
+Text.
+
+## Scope
+Text.
+
+## Source of Truth
+Text.
+
+## Rules / Definitions
+Text.
+
+## Exceptions / Caveats
+Text.
+
+## Validation / How to verify
+Text.
+
+## Related docs
+Text.
+""",
+    )
+    monkeypatch.chdir(repo)
+
+    assert main(["scan"]) == 0
+    capsys.readouterr()
+
+    paths = repo_paths(repo)
+    finding_id = load_plan(paths.plan).current_focus
+    assert finding_id is not None
+
+    assert (
+        main(["plan", "resolve", finding_id, "--result", "needs_human"]) == 1
+    )
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "Status needs_human requires a non-empty attestation." in captured.err
+
+    assert (
+        main(
+            [
+                "plan",
+                "resolve",
+                finding_id,
+                "--result",
+                "false_positive",
+                "--attest",
+                "Confirmed locally that this detector is a false alarm.",
+            ]
+        )
+        == 0
+    )
+    resolve_output = json.loads(capsys.readouterr().out)
+    assert resolve_output["event"]["status"] == "false_positive"
+    assert resolve_output["plan"]["current_focus"] is None
+
+    history_before_reopen = list(load_findings_history(paths.findings))
+
+    assert main(["plan", "reopen", finding_id]) == 0
+    reopen_output = json.loads(capsys.readouterr().out)
+    assert reopen_output["event"]["status"] == "open"
+    assert reopen_output["plan"]["current_focus"] == finding_id
+    assert len(load_findings_history(paths.findings)) == len(history_before_reopen) + 1
+
+    assert main(["next"]) == 0
+    next_payload = json.loads(capsys.readouterr().out)
+    assert next_payload["id"] == finding_id
 
 
 def test_cli_config_show_reports_invalid_config_with_nonzero_exit(

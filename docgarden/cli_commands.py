@@ -4,6 +4,7 @@ import argparse
 from dataclasses import asdict
 from datetime import datetime
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -14,13 +15,16 @@ from .quality import write_quality_score
 from .scan_workflow import run_scan
 from .state import (
     ensure_state_dirs,
-    record_plan_triage_stage,
     load_findings_history,
     load_plan,
     load_score,
     next_active_event,
     ordered_active_events,
     latest_events_by_id,
+    record_plan_resolution,
+    record_plan_triage_stage,
+    reopen_plan_finding,
+    set_plan_focus,
 )
 
 
@@ -42,6 +46,10 @@ def _ensure_plan(paths: RepoPaths):
     if not paths.plan.exists():
         run_scan(paths)
     return load_plan(paths.plan)
+
+
+def _current_actor() -> str | None:
+    return os.environ.get("USER") or os.environ.get("LOGNAME")
 
 
 def command_scan(_: argparse.Namespace) -> None:
@@ -99,6 +107,64 @@ def command_plan_triage(args: argparse.Namespace) -> None:
         updated_at=datetime.now(),
     )
     print(json.dumps(asdict(updated_plan), indent=2, sort_keys=True))
+
+
+def command_plan_focus(args: argparse.Namespace) -> None:
+    paths = repo_paths(Path.cwd())
+    _ensure_plan(paths)
+    updated_plan = set_plan_focus(
+        paths.plan,
+        paths.findings,
+        target=args.target,
+        updated_at=datetime.now(),
+    )
+    print(json.dumps(asdict(updated_plan), indent=2, sort_keys=True))
+
+
+def command_plan_resolve(args: argparse.Namespace) -> None:
+    paths = repo_paths(Path.cwd())
+    _ensure_plan(paths)
+    event, updated_plan = record_plan_resolution(
+        paths.plan,
+        paths.findings,
+        args.finding_id,
+        status=args.result,
+        event_at=datetime.now(),
+        attestation=args.attest,
+        resolved_by=_current_actor(),
+    )
+    print(
+        json.dumps(
+            {
+                "event": event,
+                "plan": asdict(updated_plan),
+            },
+            indent=2,
+            sort_keys=True,
+        )
+    )
+
+
+def command_plan_reopen(args: argparse.Namespace) -> None:
+    paths = repo_paths(Path.cwd())
+    _ensure_plan(paths)
+    event, updated_plan = reopen_plan_finding(
+        paths.plan,
+        paths.findings,
+        args.finding_id,
+        event_at=datetime.now(),
+        resolved_by=_current_actor(),
+    )
+    print(
+        json.dumps(
+            {
+                "event": event,
+                "plan": asdict(updated_plan),
+            },
+            indent=2,
+            sort_keys=True,
+        )
+    )
 
 
 def command_show(args: argparse.Namespace) -> int:

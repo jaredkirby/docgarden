@@ -16,7 +16,9 @@ from .models import (
     ATTESTATION_REQUIRED_FINDING_STATUSES,
     AUTO_RESOLVED_FINDING_STATUSES,
     FINDING_STATUSES,
+    PLAN_RESOLVE_FINDING_STATUSES,
     REOPENED_ON_OBSERVATION_STATUSES,
+    REOPENABLE_FINDING_STATUSES,
     RESOLVED_FINDING_STATUSES,
     SCORE_RELEVANT_FINDING_STATUSES,
     Finding,
@@ -92,8 +94,12 @@ def _event_priority_key(event: dict[str, Any]) -> tuple[int, str, str]:
     )
 
 
-def ordered_active_events(paths: RepoPaths) -> list[dict[str, Any]]:
-    latest = latest_events_by_id(load_findings_history(paths.findings))
+def _ordered_actionable_ids(
+    plan: PlanState | None,
+    latest: dict[str, dict[str, Any]],
+    *,
+    include_deferred: bool = False,
+) -> list[str]:
     active = {
         finding_id: event
         for finding_id, event in latest.items()
@@ -102,9 +108,10 @@ def ordered_active_events(paths: RepoPaths) -> list[dict[str, Any]]:
     if not active:
         return []
 
-    plan = load_plan(paths.plan) if paths.plan.exists() else None
-    deferred_items = set(plan.deferred_items) if plan else set()
-    ordered: list[dict[str, Any]] = []
+    deferred_items = (
+        set(plan.deferred_items) if plan is not None and not include_deferred else set()
+    )
+    ordered: list[str] = []
     seen: set[str] = set()
     priority_ids: list[str] = []
     if plan is not None:
@@ -115,21 +122,56 @@ def ordered_active_events(paths: RepoPaths) -> list[dict[str, Any]]:
     for finding_id in priority_ids:
         if finding_id in seen or finding_id in deferred_items:
             continue
-        event = active.get(finding_id)
-        if event is None:
+        if finding_id not in active:
             continue
-        ordered.append(event)
+        ordered.append(finding_id)
         seen.add(finding_id)
 
-    remainder = sorted(
-        (
-            event
-            for finding_id, event in active.items()
-            if finding_id not in seen and finding_id not in deferred_items
-        ),
-        key=_event_priority_key,
-    )
+    remainder = [
+        event["id"]
+        for event in sorted(
+            (
+                event
+                for finding_id, event in active.items()
+                if finding_id not in seen and finding_id not in deferred_items
+            ),
+            key=_event_priority_key,
+        )
+    ]
     return ordered + remainder
+
+
+def _write_plan_state(path: Path, plan: PlanState) -> PlanState:
+    write_json(path, asdict(plan))
+    return plan
+
+
+def _copy_plan_state(
+    plan: PlanState,
+    *,
+    updated_at: datetime,
+    current_focus: str | None,
+    deferred_items: list[str] | None = None,
+) -> PlanState:
+    return PlanState(
+        updated_at=updated_at.isoformat(timespec="seconds"),
+        lifecycle_stage=plan.lifecycle_stage,
+        current_focus=current_focus,
+        ordered_findings=list(plan.ordered_findings),
+        clusters=dict(plan.clusters),
+        deferred_items=(
+            list(plan.deferred_items) if deferred_items is None else list(deferred_items)
+        ),
+        last_scan_hash=plan.last_scan_hash,
+        stage_notes=dict(plan.stage_notes),
+        strategy_text=plan.strategy_text,
+    )
+
+
+def ordered_active_events(paths: RepoPaths) -> list[dict[str, Any]]:
+    latest = latest_events_by_id(load_findings_history(paths.findings))
+    plan = load_plan(paths.plan) if paths.plan.exists() else None
+    return [latest[finding_id] for finding_id in _ordered_actionable_ids(plan, latest)]
 
 
 def next_active_event(paths: RepoPaths) -> dict[str, Any] | None:
@@ -296,6 +338,62 @@ def load_plan(path: Path) -> PlanState:
         ) from exc
 
 
+def set_plan_focus(
+    plan_path: Path,
+    findings_path: Path,
+    *,
+    target: str,
+    updated_at: datetime,
+) -> PlanState:
+    plan = load_plan(plan_path)
+    latest = latest_events_by_id(load_findings_history(findings_path))
+    if not any(_is_actionable_event(event) for event in latest.values()):
+        raise StateError("Cannot focus a plan with no actionable findings.")
+
+    focus_id: str | None = None
+    deferred_items = list(plan.deferred_items)
+    target_event = latest.get(target)
+    if target_event is not None:
+        if not _is_actionable_event(target_event):
+            raise StateError(f"Cannot focus non-actionable finding: {target}.")
+        focus_id = target
+    elif target in plan.clusters:
+        cluster_ids = set(plan.clusters[target])
+        candidate_ids = [
+            finding_id
+            for finding_id in _ordered_actionable_ids(plan, latest)
+            if finding_id in cluster_ids
+        ]
+        if not candidate_ids:
+            candidate_ids = [
+                finding_id
+                for finding_id in _ordered_actionable_ids(
+                    plan,
+                    latest,
+                    include_deferred=True,
+                )
+                if finding_id in cluster_ids
+            ]
+        if not candidate_ids:
+            raise StateError(
+                f"Cannot focus cluster with no actionable findings: {target}."
+            )
+        focus_id = candidate_ids[0]
+    else:
+        raise StateError(f"Unknown focus target: {target}.")
+
+    deferred_items = [finding_id for finding_id in deferred_items if finding_id != focus_id]
+    return _write_plan_state(
+        plan_path,
+        _copy_plan_state(
+            plan,
+            updated_at=updated_at,
+            current_focus=focus_id,
+            deferred_items=deferred_items,
+        ),
+    )
+
+
 def build_plan(
     active_findings: list[Finding],
     scan_hash: str,
@@ -430,5 +528,103 @@ def record_plan_triage_stage(
         stage_notes=updated_notes,
         strategy_text=plan.strategy_text,
     )
-    write_json(plan_path, asdict(updated_plan))
-    return updated_plan
+    return _write_plan_state(plan_path, updated_plan)
+
+
+def record_plan_resolution(
+    plan_path: Path,
+    findings_path: Path,
+    finding_id: str,
+    *,
+    status: str,
+    event_at: datetime,
+    attestation: str | None = None,
+    resolved_by: str | None = None,
+    resolution_note: str | None = None,
+) -> tuple[dict[str, Any], PlanState]:
+    if status not in PLAN_RESOLVE_FINDING_STATUSES:
+        raise StateError(f"Unsupported plan resolve result: {status}.")
+
+    event = append_finding_status_event(
+        findings_path,
+        finding_id,
+        status=status,
+        event_at=event_at,
+        attestation=attestation,
+        resolved_by=resolved_by,
+        resolution_note=resolution_note,
+    )
+    plan = load_plan(plan_path)
+    latest = latest_events_by_id(load_findings_history(findings_path))
+    deferred_items = [
+        queued_id for queued_id in plan.deferred_items if queued_id != finding_id
+    ]
+
+    next_focus: str | None
+    if status in ACTIONABLE_FINDING_STATUSES:
+        next_focus = finding_id
+    else:
+        current_focus = (
+            plan.current_focus
+            if plan.current_focus != finding_id
+            and plan.current_focus not in deferred_items
+            and plan.current_focus in latest
+            and _is_actionable_event(latest[plan.current_focus])
+            else None
+        )
+        candidate_plan = _copy_plan_state(
+            plan,
+            updated_at=event_at,
+            current_focus=current_focus,
+            deferred_items=deferred_items,
+        )
+        ordered_actionable_ids = _ordered_actionable_ids(candidate_plan, latest)
+        next_focus = current_focus or (
+            ordered_actionable_ids[0] if ordered_actionable_ids else None
+        )
+
+    updated_plan = _copy_plan_state(
+        plan,
+        updated_at=event_at,
+        current_focus=next_focus,
+        deferred_items=deferred_items,
+    )
+    return event, _write_plan_state(plan_path, updated_plan)
+
+
+def reopen_plan_finding(
+    plan_path: Path,
+    findings_path: Path,
+    finding_id: str,
+    *,
+    event_at: datetime,
+    resolved_by: str | None = None,
+    resolution_note: str | None = None,
+) -> tuple[dict[str, Any], PlanState]:
+    latest = latest_events_by_id(load_findings_history(findings_path))
+    prior = latest.get(finding_id)
+    if prior is None:
+        raise StateError(f"Cannot update unknown finding: {finding_id}.")
+    if prior.get("status") not in REOPENABLE_FINDING_STATUSES:
+        raise StateError(
+            f"Cannot reopen finding with status {prior.get('status')}: {finding_id}."
+        )
+
+    event = append_finding_status_event(
+        findings_path,
+        finding_id,
+        status="open",
+        event_at=event_at,
+        resolved_by=resolved_by,
+        resolution_note=resolution_note,
+    )
+    plan = load_plan(plan_path)
+    updated_plan = _copy_plan_state(
+        plan,
+        updated_at=event_at,
+        current_focus=finding_id,
+        deferred_items=[
+            queued_id for queued_id in plan.deferred_items if queued_id != finding_id
+        ],
+    )
+    return event, _write_plan_state(plan_path, updated_plan)
