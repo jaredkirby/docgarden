@@ -36,6 +36,11 @@ These prompts are written for the current repository state after the design
 backlog and slice decomposition landed. They are intended to help separate
 implementation work from spec-conformance review work.
 
+For current automated runs, prefer `docgarden slices kickoff-prompt`,
+`docgarden slices review-prompt`, or `docgarden slices run`. Those commands
+derive prompts directly from the slice backlog and are less likely to drift
+than this manually maintained reference pack.
+
 ## Source of Truth
 
 - [Implementation slices](docgarden-implementation-slices.md)

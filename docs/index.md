@@ -4,7 +4,7 @@ doc_type: canonical
 domain: docs
 owner: kirby
 status: verified
-last_reviewed: 2026-03-08
+last_reviewed: 2026-03-09
 review_cycle_days: 30
 applies_to:
   - repo
@@ -61,4 +61,5 @@ and how multi-step work should be tracked.
 - [Docgarden spec](design-docs/docgarden-spec.md)
 - [Docgarden MVP exec plan](exec-plans/active/2026-03-08-docgarden-mvp.md)
 - [Docgarden alignment phase 2 exec plan](exec-plans/active/2026-03-09-docgarden-alignment-phase-2.md)
+- [Docgarden slice loop automation exec plan](exec-plans/active/2026-03-09-docgarden-slice-loop-automation.md)
 - [Desloppify code health exec plan](exec-plans/active/2026-03-08-desloppify-code-health.md)

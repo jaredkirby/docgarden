@@ -16,6 +16,10 @@ from .cli_commands import (
     command_quality_write,
     command_scan,
     command_show,
+    command_slices_kickoff_prompt,
+    command_slices_next,
+    command_slices_review_prompt,
+    command_slices_run,
     command_status,
 )
 from .errors import DocgardenError
@@ -149,7 +153,137 @@ def build_parser() -> argparse.ArgumentParser:
     doctor = subparsers.add_parser("doctor")
     doctor.set_defaults(func=command_doctor)
 
+    slices = subparsers.add_parser(
+        "slices",
+        help="Inspect or automate the implementation-slice worker/reviewer loop.",
+    )
+    slices_subparsers = slices.add_subparsers(dest="slices_command", required=True)
+    slices_next = slices_subparsers.add_parser(
+        "next",
+        help="Show the next queued or active implementation slice.",
+    )
+    _add_slice_path_arguments(slices_next)
+    slices_next.set_defaults(func=command_slices_next)
+    slices_kickoff = slices_subparsers.add_parser(
+        "kickoff-prompt",
+        help="Render the implementation prompt for a slice.",
+    )
+    _add_slice_path_arguments(slices_kickoff)
+    slices_kickoff.add_argument(
+        "--slice",
+        dest="slice_id",
+        help="Explicit slice ID. Defaults to the next queued or active slice.",
+    )
+    slices_kickoff.add_argument(
+        "--round",
+        type=int,
+        default=1,
+        help="Implementation round number. Revision rounds can include review context.",
+    )
+    slices_kickoff.add_argument(
+        "--review-feedback",
+        help="Path to reviewer feedback JSON when generating a revision prompt.",
+    )
+    slices_kickoff.add_argument(
+        "--previous-worker-output",
+        help="Path to the previous worker output JSON when generating a revision prompt.",
+    )
+    slices_kickoff.set_defaults(func=command_slices_kickoff_prompt)
+    slices_review = slices_subparsers.add_parser(
+        "review-prompt",
+        help="Render the PM review prompt for a slice.",
+    )
+    _add_slice_path_arguments(slices_review)
+    slices_review.add_argument(
+        "--slice",
+        dest="slice_id",
+        help="Explicit slice ID. Defaults to the next queued or active slice.",
+    )
+    slices_review.add_argument(
+        "--worker-output",
+        required=True,
+        help="Path to the latest worker output JSON.",
+    )
+    slices_review.add_argument(
+        "--round",
+        type=int,
+        default=1,
+        help="Review round number.",
+    )
+    slices_review.add_argument(
+        "--prior-review-output",
+        help="Path to the prior reviewer output JSON for re-review context.",
+    )
+    slices_review.set_defaults(func=command_slices_review_prompt)
+    slices_run = slices_subparsers.add_parser(
+        "run",
+        help="Automate the worker/reviewer loop for one or more implementation slices.",
+    )
+    _add_slice_path_arguments(slices_run)
+    slices_run.add_argument(
+        "--from-slice",
+        help="Start from a specific slice ID instead of the next queued slice.",
+    )
+    slices_run.add_argument(
+        "--max-slices",
+        type=int,
+        default=1,
+        help="Maximum number of slices to process. Use 0 to continue until no actionable slices remain.",
+    )
+    slices_run.add_argument(
+        "--max-review-rounds",
+        type=int,
+        default=3,
+        help="Maximum worker/reviewer revision rounds per slice.",
+    )
+    slices_run.add_argument(
+        "--codex-bin",
+        default="codex",
+        help="Codex CLI binary to invoke for worker and reviewer runs.",
+    )
+    slices_run.add_argument(
+        "--model",
+        help="Optional Codex model override for worker and reviewer runs.",
+    )
+    slices_run.add_argument(
+        "--codex-arg",
+        action="append",
+        help="Additional argument to pass through to `codex exec`. Repeat as needed.",
+    )
+    slices_run.set_defaults(func=command_slices_run)
+
     return parser
+
+
+def _add_slice_path_arguments(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--catalog-path",
+        help=(
+            "Repo-relative or absolute path to the implementation-slice backlog. "
+            "Defaults to docs/design-docs/docgarden-implementation-slices.md."
+        ),
+    )
+    parser.add_argument(
+        "--spec-path",
+        help=(
+            "Repo-relative or absolute path to the product spec referenced in prompts. "
+            "Defaults to docs/design-docs/docgarden-spec.md."
+        ),
+    )
+    parser.add_argument(
+        "--plan-path",
+        help=(
+            "Repo-relative or absolute path to the active exec plan referenced in prompts. "
+            "Defaults to docs/exec-plans/active/2026-03-09-docgarden-spec-slicing.md."
+        ),
+    )
+    parser.add_argument(
+        "--artifacts-dir",
+        help=(
+            "Repo-relative or absolute directory for slice-loop artifacts. "
+            "Defaults to .docgarden/slice-loops."
+        ),
+    )
 
 
 def main(argv: list[str] | None = None) -> int:

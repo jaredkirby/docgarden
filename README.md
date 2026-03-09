@@ -20,6 +20,10 @@ docgarden plan triage --stage organize --report "priority order and rationale"
 docgarden plan focus FINDING_ID_OR_CLUSTER
 docgarden plan resolve FINDING_ID --result fixed
 docgarden plan reopen FINDING_ID
+docgarden slices next
+docgarden slices kickoff-prompt
+docgarden slices review-prompt --worker-output .docgarden/slice-loops/.../worker-round-1.output.json
+docgarden slices run --max-slices 1
 docgarden show FINDING_ID
 docgarden quality write
 docgarden fix safe --apply
@@ -65,6 +69,51 @@ Use changed-scope scans for fast local feedback while editing docs, then return
 to a full `docgarden scan` before treating the score, queue, or persisted state
 as authoritative.
 
+## Slice automation
+
+`docgarden slices next` shows the next queued implementation slice directly from
+`docs/design-docs/docgarden-implementation-slices.md`.
+
+`docgarden slices kickoff-prompt` and `docgarden slices review-prompt` generate
+worker and PM-review prompts from the slice backlog itself, so the automation
+loop does not depend on the manually maintained prompt pack staying perfectly
+current.
+
+The automation now also lives in a reusable Python module:
+
+```python
+from docgarden.slices import build_slice_paths, load_slice_catalog, run_slice_loop
+```
+
+That makes it usable from other project repos, especially when they want the
+same worker/reviewer loop but keep their backlog, spec, or exec plan in
+different locations.
+
+`docgarden slices run` automates the worker/reviewer loop by:
+
+1. selecting the next queued or active slice
+2. generating the implementation prompt
+3. running `codex exec` for the worker with a structured JSON output schema
+4. generating the review prompt for that same slice
+5. running a second `codex exec` reviewer with a structured recommendation schema
+6. feeding reviewer findings back into the worker until the recommendation is
+   `ready_for_next_slice`, or stopping on `blocked_pending_product_clarification`
+
+Each run writes prompts, schemas, agent outputs, and stdout/stderr logs under
+`.docgarden/slice-loops/` so the loop stays inspectable and restartable by
+humans.
+
+Use `docgarden slices run --max-slices 0` to keep advancing until no queued
+slices remain. The safer default is `--max-slices 1`, which automates one slice
+at a time.
+
+For other repos, the `slices` CLI also accepts path overrides such as
+`--catalog-path`, `--spec-path`, `--plan-path`, and `--artifacts-dir`.
+
+There is also a repo-owned operator skill at
+`.agents/skills/docgarden-slice-orchestrator/SKILL.md` for agents that need to
+run the loop the way a human user would.
+
 ## Current implementation status
 
 The repo currently includes:
@@ -81,6 +130,9 @@ The repo currently includes:
 - plan triage stages with persisted notes
 - manual queue focus, resolve, and reopen commands
 - read-only changed-scope scans for partial local or CI feedback
+- automated slice kickoff and review prompt generation from the slice backlog
+- a Codex worker/reviewer loop that can continue until a slice is accepted or
+  blocked
 
 Next planned slice: workflow drift detection for repo-owned scripts, commands,
 and local path references documented in operator-facing docs.
