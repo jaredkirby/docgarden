@@ -27,6 +27,20 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     scan = subparsers.add_parser("scan")
+    scan.add_argument(
+        "--scope",
+        choices=["all", "changed"],
+        default="all",
+        help="Scan the whole repo or only the changed doc subset.",
+    )
+    scan.add_argument(
+        "--files",
+        nargs="+",
+        help=(
+            "Repo-relative doc files to treat as changed. Only valid with "
+            "`--scope changed`."
+        ),
+    )
     scan.set_defaults(func=command_scan)
 
     status = subparsers.add_parser("status")

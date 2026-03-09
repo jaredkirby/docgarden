@@ -6,7 +6,13 @@ from datetime import datetime
 from .files import atomic_write_text
 from .models import RepoPaths, ScanRunResult
 from .quality import build_scorecard
-from .scanner import scan_repo
+from .scanner import (
+    CHANGED_SCOPE_RECOMPUTED_VIEWS,
+    CHANGED_SCOPE_SKIPPED_VIEWS,
+    determine_changed_docs,
+    scan_changed_files,
+    scan_repo,
+)
 from .state import (
     active_findings_from_latest_events,
     actionable_findings_from_latest_events,
@@ -71,4 +77,47 @@ def run_scan(paths: RepoPaths, *, scan_time: datetime | None = None) -> ScanRunR
         scorecard=scorecard,
         scan_time=now,
     )
-    return ScanRunResult(findings=findings, scorecard=scorecard, latest_events=latest)
+    return ScanRunResult(
+        findings=findings,
+        scorecard=scorecard,
+        latest_events=latest,
+        scope="all",
+        scanned_files=[doc.rel_path for doc in documents],
+    )
+
+
+def run_changed_scan(
+    paths: RepoPaths,
+    *,
+    scan_time: datetime | None = None,
+    changed_files: list[str] | None = None,
+) -> ScanRunResult:
+    selection = determine_changed_docs(paths.repo_root, provided_files=changed_files)
+    findings, _, _ = scan_changed_files(paths.repo_root, selection=selection)
+    notes = list(selection.notes)
+    notes.append(
+        "Changed-scope scans do not rewrite `.docgarden/findings.jsonl`, "
+        "`plan.json`, or `score.json`."
+    )
+    notes.append(
+        "Run `docgarden scan --scope all` for authoritative repo-wide scores "
+        "and routing coverage."
+    )
+    if selection.deleted_files:
+        notes.append(
+            "Deleted doc paths were detected but not scanned; repo-wide "
+            "routing and orphan impacts remain pending a full scan."
+        )
+    return ScanRunResult(
+        findings=findings,
+        scorecard=None,
+        latest_events={},
+        scope="changed",
+        changed_files_source=selection.source,
+        requested_files=selection.requested_files,
+        scanned_files=selection.scanned_files,
+        deleted_files=selection.deleted_files,
+        recomputed_views=list(CHANGED_SCOPE_RECOMPUTED_VIEWS),
+        skipped_views=list(CHANGED_SCOPE_SKIPPED_VIEWS),
+        notes=notes,
+    )

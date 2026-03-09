@@ -9,10 +9,11 @@ import sys
 from pathlib import Path
 
 from .config import Config
+from .errors import DocgardenError
 from .fixers import apply_safe_fixes
 from .models import RepoPaths
 from .quality import write_quality_score
-from .scan_workflow import run_scan
+from .scan_workflow import run_changed_scan, run_scan
 from .state import (
     ensure_state_dirs,
     load_findings_history,
@@ -52,18 +53,43 @@ def _current_actor() -> str | None:
     return os.environ.get("USER") or os.environ.get("LOGNAME")
 
 
-def command_scan(_: argparse.Namespace) -> None:
-    result = run_scan(repo_paths(Path.cwd()))
-    print(
-        json.dumps(
-            {
-                "findings": len(result.findings),
-                "overall_score": result.scorecard.overall_score,
-                "strict_score": result.scorecard.strict_score,
-            },
-            indent=2,
-        )
-    )
+def command_scan(args: argparse.Namespace) -> None:
+    paths = repo_paths(Path.cwd())
+    if args.scope != "changed" and args.files:
+        raise DocgardenError("`docgarden scan --files` requires `--scope changed`.")
+
+    if args.scope == "changed":
+        result = run_changed_scan(paths, changed_files=args.files)
+        previous_score = load_score(paths.score)
+        payload = {
+            "scope": result.scope,
+            "findings": len(result.findings),
+            "overall_score": None,
+            "strict_score": None,
+            "last_full_scan_overall_score": (
+                previous_score.overall_score if previous_score else None
+            ),
+            "last_full_scan_strict_score": (
+                previous_score.strict_score if previous_score else None
+            ),
+            "changed_files_source": result.changed_files_source,
+            "requested_files": result.requested_files,
+            "scanned_files": result.scanned_files,
+            "deleted_files": result.deleted_files,
+            "recomputed_views": result.recomputed_views,
+            "skipped_views": result.skipped_views,
+            "notes": result.notes,
+        }
+    else:
+        result = run_scan(paths)
+        payload = {
+            "scope": result.scope,
+            "findings": len(result.findings),
+            "overall_score": result.scorecard.overall_score if result.scorecard else None,
+            "strict_score": result.scorecard.strict_score if result.scorecard else None,
+        }
+
+    print(json.dumps(payload, indent=2))
 
 
 def command_status(_: argparse.Namespace) -> None:

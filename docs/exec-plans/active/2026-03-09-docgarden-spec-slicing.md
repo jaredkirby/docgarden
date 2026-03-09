@@ -70,6 +70,9 @@ spec sections to PR-sized implementation units.
 - 2026-03-09: Added tests covering direct-id focus, cluster focus, append-only resolution events, attestation enforcement, and reopen behavior.
 - 2026-03-09: Tightened S04 after review so `plan resolve` only operates on currently actionable queue items, and added clearer CLI help for repetitive operator flows.
 - 2026-03-09: Re-reviewed S04 against the slice backlog and prompt pack, then advanced the durable agent prompts so the next implementation kickoff targets S05 instead of already-shipped queue work.
+- 2026-03-09: Implemented S05 changed-scope scans with `docgarden scan --scope changed`, including git-derived doc selection plus an explicit `--files` override for CI-style callers.
+- 2026-03-09: Kept full scans as the only authoritative state refresh and made changed-scope output explicitly list the recomputed checks, skipped repo-wide views, and any last full-scan score baseline.
+- 2026-03-09: Added tests covering git-derived changed scans, explicit file-list scans, subset-only detector execution, validation failures for non-doc paths, and read-only partial-scan behavior against persisted `.docgarden` state.
 
 ## Discoveries
 
@@ -98,6 +101,14 @@ spec sections to PR-sized implementation units.
 - Prompt packs drift behind implementation unless they are updated as part of
   slice review, so the review step should explicitly promote the next kickoff
   to the next queued slice.
+- Partial scans cannot safely reuse the full-scan append-and-auto-resolve path:
+  doing so would incorrectly mark unscanned findings as fixed.
+- The safest S05 boundary is to treat changed-scope scans as fast, explicit
+  previews that run document-local detectors only and leave durable score/plan
+  state to full scans.
+- CI-oriented changed-file inputs do not need a separate file-of-paths format
+  yet; a direct `--files` list is enough for this slice and keeps the product
+  surface small.
 
 ## Decision Log
 
@@ -118,6 +129,12 @@ spec sections to PR-sized implementation units.
 - 2026-03-09: Treat `plan resolve` as a queue operation, not a general status
   editor, so it must reject non-actionable findings even though the event log
   itself remains append-only.
+- 2026-03-09: Implement S05 changed-scope scans as non-persisting partial
+  previews so full scans remain the source of truth for `findings.jsonl`,
+  `plan.json`, `score.json`, and repo-wide quality claims.
+- 2026-03-09: Skip duplicate-doc-id, broken-route, and orphan-doc recomputation
+  during changed-scope scans instead of approximating them from stale global
+  state, and report those omissions explicitly in the CLI output.
 
 ## Outcomes / Retrospective
 

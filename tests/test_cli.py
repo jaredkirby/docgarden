@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import subprocess
 from dataclasses import asdict
 from datetime import datetime
 from pathlib import Path
@@ -76,6 +77,29 @@ Text.
     return tmp_path
 
 
+def init_git_repo(repo: Path) -> None:
+    subprocess.run(["git", "init"], cwd=repo, check=True, capture_output=True)
+    subprocess.run(
+        ["git", "config", "user.email", "docgarden@example.com"],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+    )
+    subprocess.run(
+        ["git", "config", "user.name", "Docgarden Tests"],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+    )
+    subprocess.run(["git", "add", "."], cwd=repo, check=True, capture_output=True)
+    subprocess.run(
+        ["git", "commit", "-m", "baseline"],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+    )
+
+
 def test_cli_scan_status_and_plan_commands(tmp_path, monkeypatch, capsys) -> None:
     repo = make_repo(tmp_path)
     monkeypatch.chdir(repo)
@@ -98,6 +122,56 @@ def test_cli_scan_status_and_plan_commands(tmp_path, monkeypatch, capsys) -> Non
     doctor_output = json.loads(capsys.readouterr().out)
     assert doctor_output["docs_exists"] is True
     assert doctor_output["agents_exists"] is True
+
+
+def test_cli_scan_changed_scope_uses_git_state_and_keeps_full_scan_state(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    repo = make_repo(tmp_path)
+    init_git_repo(repo)
+    monkeypatch.chdir(repo)
+
+    assert main(["scan"]) == 0
+    capsys.readouterr()
+
+    paths = repo_paths(repo)
+    baseline_findings = paths.findings.read_text() if paths.findings.exists() else ""
+    baseline_plan = paths.plan.read_text()
+    baseline_score = paths.score.read_text()
+
+    write(
+        repo / "docs" / "index.md",
+        CANONICAL_FRONTMATTER
+        + """
+# Docs Index
+
+## Purpose
+Text.
+""",
+    )
+
+    assert main(["scan", "--scope", "changed"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+
+    assert payload["scope"] == "changed"
+    assert payload["findings"] == 1
+    assert payload["overall_score"] is None
+    assert payload["strict_score"] is None
+    assert payload["last_full_scan_overall_score"] == 100
+    assert payload["last_full_scan_strict_score"] == 100
+    assert payload["changed_files_source"] == "git"
+    assert payload["requested_files"] == ["docs/index.md"]
+    assert payload["scanned_files"] == ["docs/index.md"]
+    assert payload["deleted_files"] == []
+    assert "repo-wide orphan-doc checks" in payload["skipped_views"]
+    assert any(
+        "do not rewrite `.docgarden/findings.jsonl`" in note
+        for note in payload["notes"]
+    )
+
+    assert (paths.findings.read_text() if paths.findings.exists() else "") == baseline_findings
+    assert paths.plan.read_text() == baseline_plan
+    assert paths.score.read_text() == baseline_score
 
 
 def test_cli_next_show_and_fix_safe_commands(tmp_path, monkeypatch, capsys) -> None:
@@ -159,6 +233,37 @@ Text.
     refreshed_payload = json.loads(capsys.readouterr().out)
     assert refreshed_payload["status"] == "fixed"
     assert refreshed_payload["event"] == "resolved"
+
+
+def test_cli_scan_changed_scope_supports_explicit_files_and_validates_paths(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    repo = make_repo(tmp_path)
+    write(
+        repo / "docs" / "extra.md",
+        CANONICAL_FRONTMATTER.replace("docs-index", "extra-doc")
+        + """
+# Extra Doc
+
+## Purpose
+Text.
+""",
+    )
+    monkeypatch.chdir(repo)
+
+    assert main(["scan", "--scope", "changed", "--files", "docs/extra.md"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["scope"] == "changed"
+    assert payload["changed_files_source"] == "files"
+    assert payload["requested_files"] == ["docs/extra.md"]
+    assert payload["scanned_files"] == ["docs/extra.md"]
+    assert payload["findings"] == 1
+
+    assert main(["scan", "--scope", "changed", "--files", "README.md"]) == 1
+    assert (
+        "Changed-scope paths must be `AGENTS.md` or markdown files under `docs/`"
+        in capsys.readouterr().err
+    )
 
 
 def test_cli_commands_module_is_directly_exercised(tmp_path) -> None:

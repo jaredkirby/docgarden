@@ -4,8 +4,9 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from docgarden.errors import DocgardenError
 from docgarden.fixers import apply_safe_fixes
-from docgarden.scanner import scan_repo
+from docgarden.scanner import determine_changed_docs, scan_changed_files, scan_repo
 
 
 CANONICAL_FRONTMATTER = """---
@@ -78,6 +79,44 @@ Text.
 
         self.assertEqual(findings, [])
         self.assertEqual(domain_counts["docs"], 1)
+
+    def test_scan_changed_files_only_reports_requested_subset(self) -> None:
+        repo = self.make_repo()
+        write(
+            repo / "docs" / "index.md",
+            CANONICAL_FRONTMATTER
+            + """
+# Docs Index
+
+## Purpose
+Text.
+""",
+        )
+        write(
+            repo / "docs" / "extra.md",
+            CANONICAL_FRONTMATTER.replace("doc_id: docs-index", "doc_id: extra-doc")
+            + """
+# Extra Doc
+
+## Purpose
+Text.
+""",
+        )
+
+        selection = determine_changed_docs(repo, provided_files=["docs/extra.md"])
+        findings, domain_counts, documents = scan_changed_files(repo, selection=selection)
+
+        self.assertEqual(selection.scanned_files, ["docs/extra.md"])
+        self.assertEqual([document.rel_path for document in documents], ["docs/extra.md"])
+        self.assertEqual(domain_counts["docs"], 1)
+        self.assertTrue(findings)
+        self.assertTrue(all(item.files == ["docs/extra.md"] for item in findings))
+
+    def test_determine_changed_docs_rejects_non_doc_paths(self) -> None:
+        repo = self.make_repo()
+
+        with self.assertRaises(DocgardenError):
+            determine_changed_docs(repo, provided_files=["README.md"])
 
     def test_safe_fix_marks_stale_doc_needs_review(self) -> None:
         repo = self.make_repo()

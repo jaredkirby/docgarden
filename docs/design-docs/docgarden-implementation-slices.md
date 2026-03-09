@@ -69,7 +69,7 @@ criteria rather than re-explaining the whole product vision.
 | S02 | completed | Findings lifecycle with attestation-ready state | S00 |
 | S03 | completed | Plan triage commands and lifecycle stages | S02 |
 | S04 | completed | Focus and resolve queue operations | S02, S03 |
-| S05 | queued | Changed-scope scans | S00 |
+| S05 | completed | Changed-scope scans | S00 |
 | S06 | queued | Generated-doc contract checks | S00 |
 | S07 | queued | Workflow drift detector | S01 |
 | S08 | queued | Routing quality detector for stale targets | S01 |
@@ -89,7 +89,7 @@ The repo has already shipped the Phase 1 core:
 - score publication to `docs/QUALITY_SCORE.md`
 - narrow safe autofix for stale status and missing headings
 
-The repo has also completed the first four generic Phase 2 slices:
+The repo has also completed the first five generic Phase 2 slices:
 
 - missing local `source_of_truth` artifact checks
 - unsupported `docgarden` validation command checks on non-draft docs
@@ -97,6 +97,8 @@ The repo has also completed the first four generic Phase 2 slices:
 - attestation-ready status metadata in append-only findings history
 - plan triage stages with persisted stage notes and lifecycle state
 - focus, resolve, and reopen queue operations with append-only status events
+- changed-scope scans that inspect only changed docs and report partial-scan
+  limitations explicitly
 
 ## Atomic slices
 
@@ -211,7 +213,7 @@ Acceptance:
 
 ### S05: Changed-scope scans
 
-Status: `queued`
+Status: `completed`
 
 Goal:
 - Support faster local and CI feedback by scanning only changed files when that
@@ -231,6 +233,8 @@ Acceptance:
 - Changed-scope scan only inspects the intended subset.
 - Full scan behavior remains unchanged.
 - Partial-scan output is explicit about what was and was not recomputed.
+- Partial scans stay read-only against durable `.docgarden` state and leave
+  authoritative score/plan updates to full scans.
 
 ### S06: Generated-doc contract checks
 

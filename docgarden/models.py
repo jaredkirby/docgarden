@@ -231,5 +231,13 @@ class RepoPaths:
 @dataclass(slots=True)
 class ScanRunResult:
     findings: list[Finding]
-    scorecard: Scorecard
+    scorecard: Scorecard | None
     latest_events: dict[str, dict[str, Any]]
+    scope: str = "all"
+    changed_files_source: str | None = None
+    requested_files: list[str] = field(default_factory=list)
+    scanned_files: list[str] = field(default_factory=list)
+    deleted_files: list[str] = field(default_factory=list)
+    recomputed_views: list[str] = field(default_factory=list)
+    skipped_views: list[str] = field(default_factory=list)
+    notes: list[str] = field(default_factory=list)

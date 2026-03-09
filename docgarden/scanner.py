@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 from collections import Counter, defaultdict
+from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 from pathlib import Path
+import subprocess
 
+from .errors import DocgardenError
 from .markdown import Document, normalize_heading, parse_document, resolve_link_target
 from .models import Finding
 from .scan_document_rules import (
@@ -29,6 +32,27 @@ from .scan_linkage import (
     scan_agents_document,
 )
 
+CHANGED_SCOPE_RECOMPUTED_VIEWS = [
+    "document-local metadata, section, freshness, and trust checks",
+    "alignment checks for scanned files",
+    "broken-link checks originating from scanned files",
+]
+CHANGED_SCOPE_SKIPPED_VIEWS = [
+    "repo-wide duplicate doc_id checks",
+    "repo-wide broken-route checks",
+    "repo-wide orphan-doc checks",
+    "durable .docgarden findings, plan, and score updates",
+]
+
+
+@dataclass(slots=True)
+class ChangedScopeSelection:
+    source: str
+    requested_files: list[str]
+    scanned_files: list[str]
+    deleted_files: list[str]
+    notes: list[str] = field(default_factory=list)
+
 
 def discover_markdown_files(repo_root: Path) -> list[Path]:
     files = []
@@ -39,6 +63,162 @@ def discover_markdown_files(repo_root: Path) -> list[Path]:
     if docs_root.exists():
         files.extend(sorted(docs_root.rglob("*.md")))
     return files
+
+
+def _is_supported_doc_rel_path(rel_path: str) -> bool:
+    path = Path(rel_path)
+    return rel_path == "AGENTS.md" or (
+        path.suffix == ".md" and path.parts[:1] == ("docs",)
+    )
+
+
+def _normalize_repo_relative_path(repo_root: Path, raw_path: str) -> str:
+    candidate = Path(raw_path)
+    if candidate.is_absolute():
+        try:
+            candidate = candidate.relative_to(repo_root)
+        except ValueError as exc:
+            raise DocgardenError(
+                f"Changed-scope paths must stay inside the repo: {raw_path}."
+            ) from exc
+
+    candidate = repo_root / candidate
+    try:
+        normalized = candidate.resolve(strict=False).relative_to(
+            repo_root.resolve(strict=False)
+        )
+    except ValueError:
+        raise DocgardenError(
+            f"Changed-scope paths must stay inside the repo: {raw_path}."
+        ) from None
+
+    rel_path = str(normalized)
+    if not _is_supported_doc_rel_path(rel_path):
+        raise DocgardenError(
+            "Changed-scope paths must be `AGENTS.md` or markdown files under "
+            f"`docs/`: {raw_path}."
+        )
+    return rel_path
+
+
+def _dedupe_preserving_order(values: list[str]) -> list[str]:
+    seen: set[str] = set()
+    deduped: list[str] = []
+    for value in values:
+        if value in seen:
+            continue
+        seen.add(value)
+        deduped.append(value)
+    return deduped
+
+
+def _run_git_path_query(repo_root: Path, args: list[str]) -> list[str]:
+    result = subprocess.run(
+        ["git", *args],
+        cwd=repo_root,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        stderr = result.stderr.strip() or "unknown git error"
+        raise DocgardenError(
+            "Unable to derive changed docs from git state. "
+            "Use `docgarden scan --scope changed --files ...` instead. "
+            f"Git said: {stderr}"
+        )
+    return [line.strip() for line in result.stdout.splitlines() if line.strip()]
+
+
+def _changed_doc_paths_from_git(repo_root: Path) -> ChangedScopeSelection:
+    tracked_existing = _run_git_path_query(
+        repo_root,
+        ["diff", "--name-only", "--diff-filter=ACMR", "--relative", "--", "AGENTS.md", "docs"],
+    )
+    staged_existing = _run_git_path_query(
+        repo_root,
+        [
+            "diff",
+            "--cached",
+            "--name-only",
+            "--diff-filter=ACMR",
+            "--relative",
+            "--",
+            "AGENTS.md",
+            "docs",
+        ],
+    )
+    untracked = _run_git_path_query(
+        repo_root,
+        ["ls-files", "--others", "--exclude-standard", "--", "AGENTS.md", "docs"],
+    )
+    tracked_deleted = _run_git_path_query(
+        repo_root,
+        ["diff", "--name-only", "--diff-filter=D", "--relative", "--", "AGENTS.md", "docs"],
+    )
+    staged_deleted = _run_git_path_query(
+        repo_root,
+        [
+            "diff",
+            "--cached",
+            "--name-only",
+            "--diff-filter=D",
+            "--relative",
+            "--",
+            "AGENTS.md",
+            "docs",
+        ],
+    )
+
+    existing = _dedupe_preserving_order(
+        [
+            _normalize_repo_relative_path(repo_root, path)
+            for path in [*tracked_existing, *staged_existing, *untracked]
+            if _is_supported_doc_rel_path(path)
+        ]
+    )
+    deleted = _dedupe_preserving_order(
+        [
+            _normalize_repo_relative_path(repo_root, path)
+            for path in [*tracked_deleted, *staged_deleted]
+            if _is_supported_doc_rel_path(path)
+        ]
+    )
+    notes: list[str] = []
+    if not existing and not deleted:
+        notes.append("No changed doc files were detected from local git state.")
+    return ChangedScopeSelection(
+        source="git",
+        requested_files=_dedupe_preserving_order(existing + deleted),
+        scanned_files=existing,
+        deleted_files=deleted,
+        notes=notes,
+    )
+
+
+def determine_changed_docs(
+    repo_root: Path,
+    *,
+    provided_files: list[str] | None = None,
+) -> ChangedScopeSelection:
+    if provided_files is None:
+        return _changed_doc_paths_from_git(repo_root)
+
+    normalized = [
+        _normalize_repo_relative_path(repo_root, raw_path) for raw_path in provided_files
+    ]
+    scanned_files = [path for path in normalized if (repo_root / path).exists()]
+    deleted_files = [path for path in normalized if not (repo_root / path).exists()]
+    notes: list[str] = []
+    if not scanned_files and not deleted_files:
+        notes.append("The provided changed-file list did not contain any doc files.")
+    return ChangedScopeSelection(
+        source="files",
+        requested_files=_dedupe_preserving_order(normalized),
+        scanned_files=_dedupe_preserving_order(scanned_files),
+        deleted_files=_dedupe_preserving_order(deleted_files),
+        notes=notes,
+    )
 
 
 def _parse_review_date(value: str) -> date | None:
@@ -207,6 +387,54 @@ def _scan_document(
         )
     )
     return findings
+
+
+def scan_changed_files(
+    repo_root: Path,
+    *,
+    selection: ChangedScopeSelection,
+) -> tuple[list[Finding], dict[str, int], list[Document]]:
+    if not selection.scanned_files:
+        return [], {}, []
+
+    now = datetime.now()
+    discovered_at = now.isoformat(timespec="seconds")
+    documents = [
+        parse_document(repo_root / rel_path, repo_root)
+        for rel_path in selection.scanned_files
+    ]
+    findings: list[Finding] = []
+    doc_id_counter: Counter[str] = Counter()
+    inbound_links: defaultdict[str, set[str]] = defaultdict(set)
+    routed_targets: defaultdict[str, set[str]] = defaultdict(set)
+
+    for document in documents:
+        if document.path.name == "AGENTS.md":
+            scan_agents_document(
+                document,
+                repo_root=repo_root,
+                inbound_links=inbound_links,
+                routed_targets=routed_targets,
+            )
+            continue
+        findings.extend(
+            _scan_document(
+                document,
+                now=now,
+                repo_root=repo_root,
+                doc_id_counter=doc_id_counter,
+                inbound_links=inbound_links,
+                routed_targets=routed_targets,
+                discovered_at=discovered_at,
+            )
+        )
+
+    deduped: dict[str, Finding] = {}
+    for finding in sorted(
+        findings, key=lambda item: (SEVERITY_ORDER.get(item.severity, 3), item.id)
+    ):
+        deduped[finding.id] = finding
+    return list(deduped.values()), collect_domain_doc_counts(documents), documents
 
 
 def scan_repo(repo_root: Path) -> tuple[list[Finding], dict[str, int], list[Document]]:
