@@ -1,1 +1,0 @@
-"""Slice automation package."""

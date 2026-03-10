@@ -24,9 +24,6 @@ TRANSIENT_CHANGED_PREFIXES = (
     ".docgarden/locks/",
     ".docgarden/reviews/",
     ".docgarden/runs/",
-    ".docgarden/slice-loops/",
-    ".docgarden/slice-loops-baseline-eval/",
-    ".docgarden/slice-loops-eval/",
 )
 
 

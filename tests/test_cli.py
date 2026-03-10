@@ -2090,6 +2090,19 @@ def test_cli_plan_subcommand_help_mentions_queue_rules(capsys) -> None:
     assert "false_positive" in resolve_help
 
 
+def test_cli_no_longer_registers_slices_subcommand(capsys) -> None:
+    parser = build_parser()
+
+    try:
+        parser.parse_args(["slices"])
+    except SystemExit as exc:
+        assert exc.code == 2
+    else:
+        raise AssertionError("Expected `slices` to be rejected as an unknown command.")
+
+    assert "invalid choice: 'slices'" in capsys.readouterr().err
+
+
 def test_cli_config_show_reports_invalid_config_with_nonzero_exit(
     tmp_path, monkeypatch, capsys
 ) -> None:

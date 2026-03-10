@@ -16,7 +16,6 @@ from .cli_commands import (
     command_status,
 )
 from .cli_plan_review import register_plan_parser, register_review_parser
-from .cli_slices import register_slices_parser
 from .errors import DocgardenError
 from .models import PLAN_RESOLVE_FINDING_STATUSES
 
@@ -125,8 +124,6 @@ def build_parser() -> argparse.ArgumentParser:
 
     doctor = subparsers.add_parser("doctor")
     doctor.set_defaults(func=command_doctor)
-
-    register_slices_parser(subparsers)
 
     return parser
 
