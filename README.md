@@ -23,19 +23,6 @@ docgarden plan triage --stage organize --report "priority order and rationale"
 docgarden plan focus FINDING_ID_OR_CLUSTER
 docgarden plan resolve FINDING_ID --result fixed
 docgarden plan reopen FINDING_ID
-docgarden slices next
-docgarden slices list
-docgarden slices kickoff-prompt
-docgarden slices review-prompt --worker-output .docgarden/slice-loops/.../worker-round-1.output.json
-docgarden slices watch --max-updates 1
-docgarden slices stop
-docgarden slices recover
-docgarden slices retry
-docgarden slices prune --keep 3
-docgarden slices run --max-slices 1
-docgarden slices run --max-slices 1 --worker-timeout-seconds 900
-docgarden slices run --max-slices 1 --reviewer-timeout-seconds 300
-docgarden slices run --max-slices 1 --agent-timeout-seconds 600
 docgarden pr draft
 docgarden pr draft --unsafe-as-issue
 docgarden pr draft --publish
@@ -172,141 +159,10 @@ Without that config and credential, `docgarden pr draft` still generates the
 local title/body summary but reports why publish is blocked instead of touching
 the hosting provider.
 
-## Slice automation
-
-`docgarden slices next` shows the next queued implementation slice directly from
-`docs/design-docs/docgarden-implementation-slices.md`.
-
-`docgarden slices kickoff-prompt` and `docgarden slices review-prompt` generate
-worker and PM-review prompts from the slice backlog itself, so the automation
-loop does not depend on the manually maintained prompt pack staying perfectly
-current.
-
-The automation now also lives in a reusable Python module:
-
-```python
-from docgarden.slices.catalog import load_slice_catalog
-from docgarden.slices.config import build_slice_paths
-from docgarden.slices.runner import run_slice_loop
-```
-
-That makes it usable from other project repos, especially when they want the
-same worker/reviewer loop but keep their backlog, spec, or exec plan in
-different locations.
-
-`docgarden slices run` automates the worker/reviewer loop by:
-
-1. selecting the next queued or active slice whose dependencies are already completed
-2. generating the implementation prompt
-3. running `codex exec` for the worker with a structured JSON output schema
-4. generating the review prompt for that same slice
-5. running a second `codex exec` reviewer with a structured recommendation schema
-6. feeding reviewer findings back into the worker until the recommendation is
-   `ready_for_next_slice`, or stopping on `blocked_pending_product_clarification`
-   or a `stopped_no_progress` guardrail when consecutive review rounds repeat
-   the same findings without material change
-
-Each run writes prompts, schemas, agent outputs, and stdout/stderr logs under
-`.docgarden/slice-loops/` so the loop stays inspectable and restartable by
-humans.
-
-As soon as a slice starts, the CLI prints its artifact directory to stderr.
-That makes it easier to inspect a long-running worker in real time instead of
-waiting for the final JSON summary.
-
-Use `docgarden slices run --max-slices 0` to keep advancing until no
-dependency-ready queued slices remain. The safer default is `--max-slices 1`,
-which automates one slice at a time.
-
-Worker and reviewer runs now use separate default timeouts: 900 seconds for the
-implementation worker and 300 seconds for the reviewer. Use
-`--worker-timeout-seconds`, `--reviewer-timeout-seconds`, or the legacy
-`--agent-timeout-seconds` override to tune them. Use `0` on any of those flags
-to disable that timeout.
-
-When a Codex run times out or exits nonzero, `docgarden` keeps the run
-inspectable:
-
-1. it writes live stdout/stderr streams directly into the current
-   `.docgarden/slice-loops/...` run directory
-2. it persists `run-status.json` with the current phase, timeout settings, and
-   any terminal error
-3. it leaves any repo changes the worker already made in place for manual
-   verification or review
-
-Nested runs also strip parent `CODEX_*` session-control environment variables,
-start as ephemeral one-shot sessions, disable repo-unrelated MCP servers by
-default, and explicitly enable network access inside the child workspace-write
-sandbox so the worker or reviewer can reach the Codex API without inheriting
-the parent session’s tool startup or sandbox state.
-
-If a worker times out, do not assume the slice is a total loss. Check the
-printed run directory, inspect `run-status.json`, run `git status`, and then
-verify any partial work with `uv run pytest` and `uv run docgarden scan` before
-you decide whether to retry or recover manually.
-
-`docgarden slices recover` is baseline-aware. Its `tracked_changes` and
-`untracked_paths` fields report only changes that appeared after the run
-started, while `preexisting_*` and `current_*` fields show the full picture for
-operators working in already-dirty repos.
-Expected untracked slice-loop artifact paths are broken out separately as
-`run_artifact_untracked_paths` so retry guidance stays focused on operator
-changes rather than the run directory itself.
-
-Recovery verification also has a bounded timeout now. If `pytest` or
-`docgarden scan` stalls during `docgarden slices recover`, the JSON payload
-returns `timed_out: true` plus the timeout budget instead of hanging the
-operator flow indefinitely.
-
-`run-status.json` now updates during long worker/reviewer runs. The most useful
-live fields are:
-
-- `current_phase`: whether the loop is in the worker or reviewer pass
-- `current_round`: which revision round is active
-- `phase_started_at`: when that worker/reviewer phase began
-- `last_heartbeat_at`: the most recent liveness update written by the runner
-- `elapsed_seconds`: how long the current phase has been running
-- `agent_pid`: the local `codex exec` process id backing the current phase
-
-The same status file also snapshots repo state when the run starts:
-
-- `baseline_recorded_at`: when the runner captured the starting repo state
-- `baseline_tracked_changes`: tracked-file diffs that already existed before the run
-- `baseline_untracked_paths`: untracked paths that already existed before the run
-
-The operator control commands build on those artifacts:
-
-- `docgarden slices watch`
-  Reads the latest run directory by default and prints its current status
-  summary. Use `--max-updates 0` to keep polling until the run stops.
-- `docgarden slices stop`
-  Sends `SIGTERM` to the `agent_pid` recorded in `run-status.json` and marks the
-  run as `stopped`.
-- `docgarden slices recover`
-  Summarizes the run, compares current repo state against the baseline captured
-  at run start, and by default reruns `uv run pytest` plus
-  `uv run docgarden scan` so operators can judge whether a timed-out or
-  interrupted run left reviewable work behind.
-- `docgarden slices retry`
-  Starts a fresh retry run for the same slice using the prior run directory as
-  context. If the earlier run already has worker/reviewer JSON artifacts, the
-  retry flow reuses them to resume from the right worker or reviewer round
-  instead of starting from scratch.
-- `docgarden slices list`
-  Shows the run directories under the configured artifacts root, newest first,
-  with their slice ids, statuses, and basic timing fields.
-- `docgarden slices prune`
-  Cleans up old run directories. It is a dry run by default; add `--apply` to
-  actually delete older non-running runs after the most recent `--keep` runs are
-  preserved.
-
-For other repos, the `slices` CLI also accepts path overrides such as
-`--catalog-path`, `--spec-path`, `--plan-path`, `--artifacts-dir`,
-`--worker-timeout-seconds`, and `--reviewer-timeout-seconds`.
-
-There is also a repo-owned operator skill at
-`.agents/skills/docgarden-slice-orchestrator/SKILL.md` for agents that need to
-run the loop the way a human user would.
+The former slice automation surface has been extracted from this repository.
+`docgarden` now focuses on documentation scanning, scoring, review, planning,
+safe autofix, and PR-draft support rather than shipping a `docgarden slices`
+workflow.
 
 ## Score rollups
 
@@ -385,14 +241,9 @@ The repo currently includes:
   capture, and weekly review-packet owner nudges
 - draft PR and unsafe-follow-up issue summaries backed by current findings plus
   changed-file context, with explicit GitHub publish gating
-- automated slice kickoff and review prompt generation from the slice backlog
-- a Codex worker/reviewer loop that can continue until a slice is accepted or
-  blocked
 
 The promotion detector only scans transient docs: exec plans plus non-verified
 note, workaround, scratch, summary, or temporary docs inferred from their
 paths. It only fires on repeated directive, repo-specific wording, and each
 finding includes a primary canonical destination plus optional supporting
 reference docs with matched-keyword evidence.
-
-The current published slice backlog is fully implemented through S14.

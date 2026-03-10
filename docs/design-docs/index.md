@@ -4,7 +4,7 @@ doc_type: canonical
 domain: design-docs
 owner: kirby
 status: verified
-last_reviewed: 2026-03-09
+last_reviewed: 2026-03-10
 review_cycle_days: 30
 applies_to:
   - repo
@@ -63,7 +63,4 @@ grow beyond the current MVP implementation.
 
 - [Docs index](../index.md)
 - [Docgarden spec](docgarden-spec.md)
-- [Implementation slices](docgarden-implementation-slices.md)
-- [Agent prompts](docgarden-agent-prompts.md)
-- [Phase 2 alignment exec plan](../exec-plans/active/2026-03-09-docgarden-alignment-phase-2.md)
-- [Spec slicing exec plan](../exec-plans/active/2026-03-09-docgarden-spec-slicing.md)
+- [Domain intelligence prioritization exec plan](../exec-plans/active/2026-03-10-domain-intelligence-prioritization.md)

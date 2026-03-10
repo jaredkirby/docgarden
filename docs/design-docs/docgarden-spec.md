@@ -525,14 +525,13 @@ findings, honest quality scores, safe fix-up PRs, and CI enforcement.
 
 ## Adoption notes
 
-- Current repo code implements the Phase 1 mechanical slice and the first part
-  of Phase 2.
-- Active implementation status belongs in the exec plans, not in this reference
-  mirror.
+- Current repo code implements the documentation-maintenance tooling described
+  in the README and active exec plans.
+- Slice automation was extracted from `docgarden`; active implementation status
+  belongs in the exec plans, not in this reference mirror.
 
 ## Related docs
 
 - [Design docs index](index.md)
 - [Docs index](../index.md)
-- [Implementation slices](docgarden-implementation-slices.md)
-- [Phase 2 alignment exec plan](../exec-plans/active/2026-03-09-docgarden-alignment-phase-2.md)
+- [Domain intelligence prioritization exec plan](../exec-plans/active/2026-03-10-domain-intelligence-prioritization.md)
