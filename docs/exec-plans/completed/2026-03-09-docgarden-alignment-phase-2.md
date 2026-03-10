@@ -3,8 +3,8 @@ doc_id: docgarden-alignment-phase-2-exec-plan
 doc_type: exec-plan
 domain: exec-plans
 owner: kirby
-status: draft
-last_reviewed: 2026-03-09
+status: archived
+last_reviewed: 2026-03-10
 review_cycle_days: 14
 applies_to:
   - repo
@@ -16,7 +16,7 @@ verification:
   method: implementation-linked
   confidence: medium
 supersedes: []
-superseded_by: null
+superseded_by: docs/exec-plans/active/2026-03-10-domain-intelligence-prioritization.md
 tags:
   - exec-plan
   - alignment
@@ -103,4 +103,6 @@ planning, and stronger routing for durable design docs.
 
 ## Outcomes / Retrospective
 
-Pending completion of the first alignment slice and verification run.
+Archived on 2026-03-10 after the first alignment slice shipped. Follow-on
+domain-intelligence prioritization now lives in
+`docs/exec-plans/active/2026-03-10-domain-intelligence-prioritization.md`.

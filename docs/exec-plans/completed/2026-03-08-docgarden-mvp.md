@@ -3,8 +3,8 @@ doc_id: docgarden-mvp-exec-plan
 doc_type: exec-plan
 domain: exec-plans
 owner: kirby
-status: draft
-last_reviewed: 2026-03-08
+status: archived
+last_reviewed: 2026-03-10
 review_cycle_days: 14
 applies_to:
   - repo
@@ -66,4 +66,5 @@ code and enough documentation structure to validate against.
 
 ## Outcomes / Retrospective
 
-Pending implementation and verification.
+Archived on 2026-03-10 after the MVP capabilities landed and the repo moved on
+to follow-on alignment, planning, and review work.
