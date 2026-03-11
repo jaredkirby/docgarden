@@ -4,7 +4,7 @@ doc_type: reference
 domain: docs
 owner: docgarden
 status: draft
-last_reviewed: '2026-03-09'
+last_reviewed: '2026-03-11'
 review_cycle_days: 7
 applies_to:
 - repo
@@ -22,7 +22,7 @@ tags:
 
 # Quality Score
 
-Updated: 2026-03-09
+Updated: 2026-03-11
 
 ## Repo Summary
 - Overall: 100
@@ -37,11 +37,11 @@ Updated: 2026-03-09
 - None in this scan.
 
 ## Trend
-- 2026-03-09T09:53:10: overall 100, strict 100, weighted rollup 100
-- 2026-03-09T09:53:13: overall 100, strict 100, weighted rollup 100
-- 2026-03-09T09:53:45: overall 100, strict 100, weighted rollup 100
-- 2026-03-09T09:54:08: overall 100, strict 100, weighted rollup 100
-- 2026-03-09T09:54:13: overall 100, strict 100, weighted rollup 100
+- 2026-03-10T19:57:33: overall 100, strict 100, weighted rollup 100
+- 2026-03-11T08:05:35: overall 100, strict 100, weighted rollup 100
+- 2026-03-11T09:08:29: overall 100, strict 100, weighted rollup 100
+- 2026-03-11T09:08:45: overall 100, strict 100, weighted rollup 100
+- 2026-03-11T09:08:46: overall 100, strict 100, weighted rollup 100
 
 ## Domains
 - design-docs: 100 (high trust, weight: 2)
