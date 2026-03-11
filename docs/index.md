@@ -39,6 +39,7 @@ and how multi-step work should be tracked.
 ## Rules / Definitions
 
 - `docs/index.md` is the primary documentation entry point.
+- User-facing documentation lives directly under `docs/`.
 - Active implementation work belongs in `docs/exec-plans/active/`.
 - Design intent and future-shape specs live in `docs/design-docs/`.
 - Generated quality output is published in `docs/QUALITY_SCORE.md`.
@@ -57,6 +58,17 @@ and how multi-step work should be tracked.
 - Confirm routed files exist and remain current.
 
 ## Related docs
+
+### User documentation
+
+- [Getting started](getting-started.md)
+- [Concepts](concepts.md)
+- [Command reference](commands.md)
+- [Configuration](configuration.md)
+- [CI setup](ci-setup.md)
+- [Architecture](architecture.md)
+
+### Project docs
 
 - [QUALITY_SCORE.md](QUALITY_SCORE.md)
 - [PLANS.md](PLANS.md)
